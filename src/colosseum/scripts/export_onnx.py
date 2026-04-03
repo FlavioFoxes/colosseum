@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Export a colosseum PPO checkpoint to ONNX.
 
-Output is placed next to the checkpoint as <task_name>_<algo_name>.onnx.
+Output layout:
+    models/<task_name>/<task_name>_<timestamp>.onnx
+    models/<task_name>/<task_name>_latest.onnx  (symlink → above)
 
 Usage:
     pixi run -e train export-onnx task:t1-velocity-flat
-    pixi run -e train export-onnx task:t1-velocity-rough --checkpoint ./wandb/latest-run/files/model_16000.pt
+    pixi run -e train export-onnx task:t1-velocity-rough --checkpoint ./logs/wandb/latest-run/checkpoints
 """
 
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import tyro
@@ -53,34 +56,25 @@ def main() -> None:
     logger.error(f"No checkpoint found for: {config.checkpoint}")
     sys.exit(1)
 
-  # Export to project-level models/ directory
-  models_dir = Path("models")
-  models_dir.mkdir(exist_ok=True)
+  task_name = config.task.name
+  task_models_dir = Path("models") / task_name
+  task_models_dir.mkdir(parents=True, exist_ok=True)
 
-  # Resolve symlinks so we get the real checkpoint name (e.g. latest.pt → model_0099483648.pt)
-  ckpt = ckpt.resolve()
-  stem = ckpt.stem
-  step = stem.split("_")[-1] if "_" in stem else stem
-  algo_cfg = config.task.algo_cfg
-  assert algo_cfg is not None, (
-    f"Task '{config.task.name}' has no algo_cfg. "
-    "Implement the algo_cfg property in the task's __init__.py."
-  )
-  base_name = f"{config.task.name}_{algo_cfg.name.lower()}"
-  filename = f"{base_name}_{step}.onnx"
-  output_path = models_dir / filename
+  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+  filename = f"{task_name}_{timestamp}.onnx"
+  output_path = task_models_dir / filename
 
   result = export_policy_to_onnx(config, ckpt, output_path)
 
-  # Create a stable latest symlink for deploy configs to reference
-  latest_link = models_dir / f"{base_name}_latest.onnx"
+  # Update stable latest symlink
+  latest_link = task_models_dir / f"{task_name}_latest.onnx"
   try:
     if latest_link.exists() or latest_link.is_symlink():
       latest_link.unlink()
     latest_link.symlink_to(result.name)
     logger.info(f"Symlink: {latest_link.name} -> {result.name}")
-  except OSError:
-    pass
+  except OSError as e:
+    logger.warning(f"Could not create latest symlink: {e}")
 
   logger.success(f"Exported: {result}")
 

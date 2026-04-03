@@ -19,8 +19,9 @@ dependencies = [
 channels = [
 	"https://prefix.dev/pixi-build-backends",
 	"robostack-humble",
-	"conda-forge",
-	"https://prefix.dev/spqr",
+    "https://prefix.dev/conda-forge",
+    "https://prefix.dev/spqr",
+    "https://prefix.dev/spqr-tests",
 ]
 platforms = ["linux-64", "linux-aarch64"]
 preview = ["pixi-build"]
@@ -79,56 +80,55 @@ colosseum = {path = ".", editable = true}
 deploy = { cmd = "python -m colosseum.scripts.deploy", description = "Deploy trained policy" }
 
 # ============================================
-# ROBOT FEATURE
+# ARENA FEATURE
 # ============================================
-[tool.pixi.environments.robot]
-features = ["robot"]
+
+[tool.pixi.environments.arena]
+features = ["arena"]
 no-default-feature = true
-solve-group = "robot"
+solve-group = "arena"
 
-[tool.pixi.feature.robot]
-platforms = ["linux-aarch64", "linux-64"]
+[tool.pixi.feature.arena]
+platforms = ["linux-64", "linux-aarch64"]
 
-[tool.pixi.feature.robot.dependencies]
-python = "3.9.*"
+[tool.pixi.feature.arena.dependencies]
+cmake = "==4.3.0"
+gtest = "*"
 booster_robotics_sdk = "==1.5.0"
-nanobind = ">=2.4,<3"
+tinyxml2 = "*"
+eigen = "*"
+onnxruntime-cpp = "==1.24.2"
+msgpack-cxx = "*"
+mujoco = ">=3.0"
+glfw = "*"
+boost-cpp = "*"
+libgl-devel = "==1.7.0"
+libegl-devel = "==1.7.0"
 
-[tool.pixi.feature.robot.pypi-dependencies]
-colosseum = {path = ".", editable = true}
-torch = "*"
-torchvision = "*"
+# Cross-compilation tools (only needed on the build machine)
+[tool.pixi.feature.arena.target.linux-64.dependencies]
+gxx_linux-64 = "*"
+gxx_linux-aarch64 = "*"
+make = "*"
+pkg-config = "*"
+sysroot_linux-64 = ">=2.39"
+sysroot_linux-aarch64 = ">=2.39"
 
-[tool.pixi.feature.robot.tasks]
+[tool.pixi.feature.arena.target.linux-aarch64.dependencies]
+sysroot_linux-aarch64 = ">=2.39"
+gtest = "*"
+
+[tool.pixi.feature.arena.tasks]
 gen-booster-stubs = { cmd = "python -m nanobind.stubgen -m booster_robotics_sdk_python -o typings/booster_robotics_sdk_python.pyi", description = "Generate stubs for booster_robotics_sdk_python into typings/" }
+configure = { cmd = "cmake -S $PIXI_PROJECT_ROOT -B $PIXI_PROJECT_ROOT/build -DCMAKE_PREFIX_PATH=$CONDA_PREFIX -DCMAKE_CXX_COMPILER=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-g++", description = "Configure CMake" }
+compile = { cmd = "sh -c 'cmake --build $PIXI_PROJECT_ROOT/build -j${JOBS:-1}'", depends-on = ["configure"], description = "Compile arena" }
+main = { cmd = "$PIXI_PROJECT_ROOT/build/src/arena/main", env = { MODELS_DIR = "$PIXI_PROJECT_ROOT/models", LD_LIBRARY_PATH = "$CONDA_PREFIX/lib" }, depends-on = ["compile"], description = "Run arena main (plain CMake build)" }
+gdb-main = { cmd = "gdb $PIXI_PROJECT_ROOT/build/src/arena/main", env = { MODELS_DIR = "$PIXI_PROJECT_ROOT/models", LD_LIBRARY_PATH = "$CONDA_PREFIX/lib" }, depends-on = ["compile"], description = "Run arena in gdb (plain CMake build)" }
+clear = { cmd = "rm -rf $PIXI_PROJECT_ROOT/build", description = "Clear the build directory" }
+build = {cmd = "rattler-build build --recipe recipe.yaml --target-platform linux-aarch64 --channel file:///$PIXI_PROJECT_ROOT/local-channel/channel --no-include-recipe"}
 
-# ============================================
-# ROSSIM FEATURE
-# ============================================
-
-# [tool.pixi.environments.rossim]
-# features = ["rossim"]
-# no-default-feature = true
-# solve-group = "rossim"
-
-# [tool.pixi.feature.rossim]
-# platforms = ["linux-64"]
-
-# [tool.pixi.feature.rossim.dependencies]
-# python = "3.9.*"
-# ros-humble-rclpy = ">=3.3.4,<4"
-# ros-humble-rmw-fastrtps-cpp = "*"
-# ros-humble-rmw-fastrtps-dynamic-cpp = "*"
-# ros-humble-rosidl-typesupport-fastrtps-c = "*"
-# ros-humble-rosidl-typesupport-fastrtps-cpp = "*"
-# ros-humble-rosidl-runtime-py = "*"
-# tinyxml2 = "==9"
-
-# [tool.pixi.feature.rossim.pypi-dependencies]
-# colosseum = {path = ".", editable = true}
-# tyro = ">=1.0.1,<2"
-# pydantic = ">=2.12.5,<3"
-# evdev = ">=1.9.2,<2"
+[tool.pixi.feature.arena.system-requirements]
+libc = "2.39"
 
 # ============================================
 # DOCS FEATURE

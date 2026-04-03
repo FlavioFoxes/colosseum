@@ -165,11 +165,9 @@ src/colosseum/
 │   │   ├── t1_constants.py    # Spec loaders and entity configs (training)
 │   │   ├── mdp/               # Layer 2: T1-specific MDP functions
 │   │   │   └── observations.py  # T1-specific observations (e.g., foot_contact)
-│   │   └── deploy/            # Deployment configurations
-│   │       └── robot_cfg.py     # T1 deployment configs (12/23 DOF)
 │   └── cartpole/     # CartPole balancing demo
 │
-├── tasks/            # Task definitions (training + deployment shared code)
+├── tasks/            # Task definitions (training only)
 │   ├── cartpole/     # CartPole balancing task
 │   │   ├── cartpole_scene.py  # Scene configuration
 │   │   ├── cartpole_task.py   # MDP (actions, obs, rewards, terminations, events)
@@ -182,17 +180,6 @@ src/colosseum/
 │       │   ├── observations.py  # Pure observation functions (SHARED)
 │       │   └── wrappers.py      # Training wrappers (mjlab-only)
 │       └── rl/       # RL algorithm configs
-│
-├── deploy/           # Deployment infrastructure
-│   ├── core/
-│   │   ├── controllers/  # Base controller abstractions
-│   │   └── utils/
-│   │       ├── registry.py         # Task registry
-│   │       └── robot_registry.py   # Robot registry (NEW)
-│   └── tasks/        # Task deployment implementations
-│       └── velocity/
-│           ├── policy.py    # Robot-agnostic velocity policy
-│           └── configs.py   # Example deployment configs
 │
 ├── play/             # Evaluation/playback utilities
 └── utils/            # Shared utilities (path helpers)
@@ -351,482 +338,118 @@ def my_reward(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor
 
 ## Deployment System Architecture
 
-Colosseum's deployment system provides a modular, robot-agnostic framework for deploying trained policies to both MuJoCo simulation (sim-to-sim testing) and real hardware.
-
-**Architecture Documentation:**
-- See `deployment_docs/DEPLOYMENT_FIX_COMPLETE.md` for recent stability fixes
-- See `deployment_docs/GROUND_CONTACT_FIX.md` for initialization troubleshooting
+Deployment is handled entirely by the **C++ arena runtime** at `src/arena/`. The Python `src/colosseum/` tree is training infrastructure only — no deployment code lives there.
 
 ### Directory Structure
 
 ```
-src/colosseum/deploy/
-├── config/                # Pydantic frozen dataclasses
-│   ├── controller.py      # ControllerConfig (top-level orchestration)
-│   ├── robot.py           # RobotConfig, PrepareStateConfig
-│   ├── policy.py          # PolicyConfig, VelocityCommandConfig
-│   └── backend.py         # MujocoConfig, BoosterConfig
+src/arena/
+├── include/
+│   ├── TaskConfig.h          # Top-level config (task name, model path, policy_dt, action_scale, RobotConfig)
+│   ├── RobotConfig.h         # RobotConfig<N>: joint names, gains, limits, armature, prepare_state
+│   ├── RobotData.h           # RobotData<N>: joint/IMU state + precomputed real2sim/sim2real maps
+│   ├── RobotState.h          # Pure sensor snapshot written by portals (hardware order)
+│   ├── Policy.h              # Abstract base: owns ONNX model, input_source_, robot_data_
+│   ├── ObservationSpec.h     # Named component list + validate_size() for debug builds
+│   ├── VelocityCommand.h     # VelocityCommand + set_normalized(); owned by concrete task
+│   ├── IInputSource.h        # Generic get_axis(int)/get_button(int); factory create_input_source()
+│   ├── TaskRegistry.h        # REGISTER_TASK macro + singleton registry
+│   ├── ModelRegistry.h       # Resolves task name → ONNX model path
+│   ├── OnnxPolicy.h          # ONNX Runtime wrapper (infer, input_dim, output_dim)
+│   ├── input/
+│   │   ├── JoystickInput.h   # evdev polling thread, per-axis atomics, deadzone
+│   │   └── KeyboardInput.h   # WASD/QE raw terminal input
+│   └── portals/
+│       ├── IPortal.h         # initialize / hasState / getState / updateState / publishCommand / tick
+│       ├── MujocoPortal.h    # GLFW sim-to-sim backend
+│       ├── RobotPortal.h     # Booster SDK real-robot backend
+│       └── CircusPortal.h    # TCP/msgpack sim backend
 │
-├── core/                  # Core abstractions
-│   ├── base_controller.py # BaseController (lifecycle + control loop)
-│   ├── robot.py           # BoosterRobot, RobotData (state management)
-│   ├── policy.py          # Policy (abstract base class)
-│   ├── observation_spec.py # ObservationSpec (training-deployment contract)
-│   ├── command.py         # VelocityCommand
-│   └── registry.py        # TaskRegistry (auto-registration)
+├── src/
+│   ├── main.cpp              # CLI entry point: --backend booster|mujoco|circus --task <name>
+│   ├── tasks/
+│   │   └── T1VelocityFlat.cpp  # T1 23-DOF velocity task (obs, config, REGISTER_TASK)
+│   ├── portals/
+│   │   ├── MujocoPortal.cpp
+│   │   ├── RobotPortal.cpp
+│   │   └── CircusPortal.cpp
+│   └── input/
+│       ├── JoystickInput.cpp
+│       └── KeyboardInput.cpp
 │
-├── backends/              # Backend implementations
-│   ├── mujoco.py          # MujocoController (sim-to-sim testing)
-│   └── booster.py         # BoosterController (real robot, stub)
-│
-└── input/                 # User input handling
-    ├── base.py            # BaseInputSource, InputState
-    ├── joystick.py        # JoystickInputSource (evdev gamepad)
-    └── keyboard.py        # KeyboardInputSource (terminal)
-
-tasks/velocity/deploy/t1_23dof/  # Task-specific deployment
-├── __init__.py            # @register_task decorators
-├── config.py              # ControllerConfig presets
-├── policy.py              # T1VelocityPolicy (observation + inference)
-└── models/                # ONNX policy checkpoints
-
-robots/booster_t1/
-└── deploy_config.py       # T1_23DOF_ROBOT_CFG (centralized robot specs)
+└── assets/
+    └── scene.xml             # MuJoCo scene (ground, lights) — robot MJCF composed at runtime
 ```
 
-### Configuration System (Immutable Composition)
+### Configuration
 
-All deployment configs are **frozen dataclasses** (immutable after creation) with strict type validation:
+All task configuration is set in the task's static `make_config()` method (e.g. `T1VelocityFlat::make_config()`). There are no external config files.
 
-```python
-@dataclass(frozen=True)
-class ControllerConfig:
-    """Top-level deployment configuration"""
-    policy_dt: float = 0.02                    # 50Hz policy execution
-    robot: RobotConfig                         # Robot hardware specs
-    policy: PolicyConfig                       # Policy checkpoint and scaling
-    vel_command: Optional[VelocityCommandConfig] = None
-    input: Optional[InputConfig] = None
-    mujoco: MujocoConfig = field(default_factory=MujocoConfig)
-    booster: BoosterConfig = field(default_factory=BoosterConfig)
-
-    @computed_field
-    @property
-    def physics_dt(self) -> float:
-        """Physics timestep = policy_dt / decimation"""
-        return self.policy_dt / self.mujoco.decimation
+**TaskConfig** (top-level):
+```cpp
+struct TaskConfig {
+    static constexpr int NUM_JOINTS = 23;
+    std::string task_name;       // registry key, also used for model lookup
+    std::string model_path;      // resolved ONNX path
+    float policy_dt = 0.02f;     // 50 Hz
+    float action_scale = 0.25f;  // scalar; per-joint scale = action_scale * effort_limit[i] / kp[i]
+    RobotConfig<23> robot;       // all hardware specs
+    std::string scene_mjcf_path; // MujocoPortal scene (ground, lights)
+};
 ```
 
-**Key Configuration Objects:**
-
-**RobotConfig** (hardware specifications):
-```python
-RobotConfig(
-    joint_names=(23,)           # Real hardware order
-    sim_joint_names=(23,)       # MuJoCo compiled order
-    body_names=(24,)            # Body names for sensors
-    joint_stiffness=(23,)       # Kp gains (MUST match training!)
-    joint_damping=(23,)         # Kd gains (MUST match training!)
-    default_joint_pos=(23,)     # HOME_QPOS (standing pose)
-    effort_limit=(23,)          # Peak torques per joint
-    mjcf_path=Path              # Path to robot MJCF/XML
-    prepare_state=PrepareStateConfig  # Safe initialization pose
-)
+**RobotConfig<N>** (hardware specs):
+```cpp
+// joint_names       = hardware/DDS order (what the robot reports)
+// sim_joint_names   = MuJoCo compiled order (what the policy was trained with)
+// For T1 these are identical → real2sim/sim2real are identity permutations.
+cfg.robot.joint_stiffness   // Kp per joint — MUST match training
+cfg.robot.joint_damping     // Kd per joint — MUST match training
+cfg.robot.effort_limit      // peak torque per joint [Nm]
+cfg.robot.joint_armature    // reflected inertia (0.3 for all T1 joints)
+cfg.robot.default_joint_pos // standing pose; added to decoded action
+cfg.robot.prepare_state     // safe startup pose (pos, stiffness, damping, duration_s)
+cfg.robot.mjcf_path         // robot MJCF — composed with scene at runtime by MujocoPortal
 ```
 
-**PolicyConfig** (policy loading and scaling):
-```python
-PolicyConfig(
-    task_name="velocity"                    # Registry lookup key
-    checkpoint_path=Path("policy.onnx")     # ONNX or .pt model
-    action_scale=0.25                       # MUST match training!
-    use_onnx=True                           # ONNX runtime by default
-)
+### Joint Order Remapping
+
+`RobotData<N>` (owned by `Policy` base) precomputes two index arrays at construction:
+
+- `real2sim[i]` — hardware index that feeds sim slot `i`. Used in `build_observation()`:
+  `obs_joint_pos[i] = state.joint_pos[real2sim[i]]`
+- `sim2real[i]` — sim index that feeds hardware slot `i`. Used in `get_action()`:
+  `hardware_target[i] = net_out[sim2real[i]] * scale + default_joint_pos[i]`
+
+`last_action` (fed back into the observation) is kept in sim/policy order — it is the raw network output, not remapped.
+
+### Control Loop
+
+```
+main.cpp:
+  portal->initialize()
+  [booster only] portal->changeMode(kCustom) → portal->prepare(cfg.robot.prepare_state)
+  policy->reset()
+  loop:
+    portal->updateState()
+    targets = policy->get_action(portal->getState())
+    portal->publishCommand(targets, kp, kd)
+    portal->tick()   ← sleeps to maintain policy_dt
 ```
 
-**MujocoConfig** (sim-to-sim backend settings):
-```python
-MujocoConfig(
-    init_pos=(0.0, 0.0, 0.70)  # CRITICAL: base height (see fixes below)
-    init_quat=(1.0, 0.0, 0.0, 0.0)  # Identity quaternion (no rotation)
-    decimation=4                     # 4 physics steps per policy step
-    save_states=False                # State logging disabled by default
-)
-```
+### Adding a New Task
 
-### Robot State Management
+1. Create `src/arena/src/tasks/MyTask.cpp`.
+2. Define a class inheriting `Policy`. Implement `build_observation()` and `make_config()`.
+3. Call `REGISTER_TASK("my-task", MyTask);` at file scope.
+4. Add a model file under `src/arena/models/` and register the name in `ModelRegistry`.
 
-**RobotData** (runtime state container):
-```python
-class RobotData:
-    """All joint-indexed tensors use REAL hardware order"""
+The task is automatically available via `--task my-task` at runtime.
 
-    # Joint state (real hardware order)
-    joint_pos: torch.Tensor         # (23,) joint positions [rad]
-    joint_vel: torch.Tensor         # (23,) joint velocities [rad/s]
-    feedback_torque: torch.Tensor   # (23,) measured torques [Nm]
+### Backends
 
-    # Base state (IMU data in body frame)
-    root_pos_w: torch.Tensor         # (3,) world position [m]
-    root_quat_w: torch.Tensor        # (4,) world orientation (w,x,y,z)
-    root_lin_vel_b: torch.Tensor     # (3,) linear velocity [m/s]
-    root_ang_vel_b: torch.Tensor     # (3,) angular velocity [rad/s]
-    projected_gravity_b: torch.Tensor # (3,) gravity vector in body frame
-
-    # Joint order remapping (computed once at init)
-    real2sim_joint_indexes: list[int]  # Maps hardware → policy order
-    sim2real_joint_indexes: list[int]  # Maps policy → hardware order
-```
-
-**Joint Order Remapping:**
-
-The T1 robot has **two different joint orderings**:
-1. **Real hardware order** (`joint_names`): Hardware interface order
-2. **MuJoCo simulation order** (`sim_joint_names`): Alphabetically sorted by MuJoCo
-
-The system automatically computes bidirectional mappings:
-```python
-# Computed during RobotData.__init__
-real2sim_joint_indexes = [cfg.joint_names.index(name)
-                          for name in cfg.sim_joint_names]
-sim2real_joint_indexes = [cfg.sim_joint_names.index(name)
-                          for name in cfg.joint_names]
-
-# Used in policy observation computation (remap to sim order)
-joint_pos_sim = robot.data.joint_pos[robot.data.real2sim_joint_indexes]
-
-# Used in action application (remap to hardware order)
-joint_targets_real = action[robot.data.sim2real_joint_indexes]
-```
-
-### Policy Architecture
-
-**Policy Base Class:**
-```python
-class Policy(ABC):
-    """All deployment policies inherit from this"""
-
-    def __init__(self, controller: BaseController):
-        self.controller = controller
-        self.robot = controller.robot
-        self.config = controller.cfg.policy
-
-        # Load ONNX or TorchScript model
-        self._model = self._load_artifact(Path(self.config.checkpoint_path))
-
-        # Compute per-joint action scaling (MUST match training!)
-        # scale = action_scale * effort_limit / stiffness
-        self.action_scale = (
-            self.config.action_scale
-            * self.robot.effort_limit
-            / self.robot.joint_stiffness
-        )
-
-    @abstractmethod
-    def reset(self) -> None:
-        """Called at controller.start()"""
-
-    @abstractmethod
-    def inference(self) -> torch.Tensor:
-        """Run policy, return joint targets in REAL hardware order"""
-```
-
-**T1VelocityPolicy Implementation:**
-```python
-class T1VelocityPolicy(Policy):
-    def compute_observation(self) -> torch.Tensor:
-        """Build observation matching VELOCITY_OBS_SPEC contract.
-
-        CRITICAL: Remaps joint data from hardware order to simulation order!
-        """
-        real2sim = self.robot.data.real2sim_joint_indexes
-
-        obs = torch.cat([
-            self.robot.data.root_lin_vel_b,           # (3,) base lin vel
-            self.robot.data.root_ang_vel_b,           # (3,) base ang vel
-            self.robot.data.projected_gravity_b,      # (3,) proj gravity
-            self.robot.data.joint_pos[real2sim],      # (23,) REMAPPED!
-            self.robot.data.joint_vel[real2sim],      # (23,) REMAPPED!
-            self.last_action,                         # (23,) in sim order
-            self.vel_command.to_tensor(),             # (3,) velocity cmds
-        ], dim=-1)  # Total: 3+3+3+23+23+23+3 = 82 for T1 23-DOF
-
-        return obs.unsqueeze(0)  # (1, 82)
-
-    def inference(self) -> torch.Tensor:
-        """Execute policy and return joint targets.
-
-        Flow: obs (sim order) → policy → action (sim order)
-              → remap to hardware order → scale → add default pose
-        """
-        obs = self.compute_observation()      # (1, 82)
-        action = self._model(obs).flatten()   # (23,) in sim order
-
-        self.last_action = action  # Store for next step (keep in sim order)
-
-        # Remap to hardware order and scale
-        sim2real = self.robot.data.sim2real_joint_indexes
-        joint_targets = (
-            action[sim2real] * self.action_scale
-            + self.robot.default_joint_pos
-        )
-
-        return joint_targets  # (23,) in REAL hardware order
-```
-
-### BaseController Execution Flow
-
-**Lifecycle:**
-```python
-class BaseController(ABC):
-    def start(self) -> None:
-        """Initialize control session"""
-        self._step_count = 0
-        self._elapsed_s = 0.0
-        self.is_running = True
-        self.policy.reset()
-
-    def policy_step(self) -> torch.Tensor:
-        """Execute one policy inference step (50Hz)"""
-        self._step_count += 1
-        self._elapsed_s = self._step_count * self.cfg.policy_dt
-        return self.policy.inference()
-
-    def update_command(self) -> None:
-        """Update velocity commands from joystick/keyboard input"""
-        if self.input_source is None:
-            return
-
-        vx = self.input_source.get_vx_cmd()   # [-1, 1]
-        vy = self.input_source.get_vy_cmd()
-        vyaw = self.input_source.get_vyaw_cmd()
-
-        # Scale by velocity limits
-        self.vel_command.lin_vel_x = vx * self.vel_command.vx_max
-        self.vel_command.lin_vel_y = vy * self.vel_command.vy_max
-        self.vel_command.ang_vel_yaw = vyaw * self.vel_command.vyaw_max
-
-    # Implemented by backends
-    @abstractmethod
-    def update_state(self) -> None:
-        """Update robot.data from sensors/simulator"""
-
-    @abstractmethod
-    def ctrl_step(self, dof_targets: torch.Tensor) -> None:
-        """Apply joint targets to actuators"""
-
-    @abstractmethod
-    def run(self) -> None:
-        """Main control loop"""
-```
-
-**Typical Control Loop (MuJoCo Backend):**
-```python
-def run(self):
-    with mujoco.viewer.launch_passive(model, data) as viewer:
-        self.update_state()  # Initial state
-        self.start()         # Initialize policy
-
-        while viewer.is_running() and self.is_running:
-            # 1. Update robot state from MuJoCo sensors
-            self.update_state()
-
-            # 2. Update velocity commands from input
-            self.update_command()
-
-            # 3. Run policy inference (50Hz)
-            joint_targets = self.policy_step()
-
-            # 4. Apply controls (4x physics steps @ 200Hz)
-            self.ctrl_step(joint_targets)
-
-            # 5. Sync viewer and sleep
-            viewer.sync()
-            time.sleep(self.cfg.policy_dt)
-```
-
-### MuJoCo Backend (Sim-to-Sim Testing)
-
-**Key Implementation Details:**
-
-**Programmatic Actuator Creation:**
-```python
-class MujocoController(BaseController):
-    def __init__(self, cfg: ControllerConfig):
-        # Load MJCF and clear XML actuators
-        spec = mujoco.MjSpec.from_file(self.robot.cfg.mjcf_path)
-        spec.actuators.clear()
-
-        # Add ground plane
-        ground = spec.worldbody.add_geom()
-        ground.type = mujoco.mjtGeom.mjGEOM_PLANE
-        ground.friction[:] = [1.0, 0.005, 0.0001]
-
-        # Add position actuators (one per joint, in MuJoCo order)
-        for i, joint_name in enumerate(self.robot.cfg.sim_joint_names):
-            actuator = spec.add_actuator()
-            actuator.name = f"{joint_name}_actuator"
-            actuator.joint = spec.find_joint(joint_name)
-            actuator.gainprm[0] = self.robot.cfg.joint_stiffness[i]
-            actuator.biasprm[2] = -self.robot.cfg.joint_damping[i]
-            actuator.ctrlrange = [-1e9, 1e9]  # Position targets (unlimited)
-            actuator.forcerange = [
-                -self.robot.cfg.effort_limit[i],
-                self.robot.cfg.effort_limit[i],
-            ]
-
-        # Compile and initialize
-        self.mj_model = spec.compile()
-        self.mj_model.opt.timestep = self.cfg.physics_dt  # 0.005s = 200Hz
-        self.mj_data = mujoco.MjData(self.mj_model)
-
-        # Set initial pose: [base_pos(3), base_quat(4), joint_pos(23)]
-        self.mj_data.qpos[:] = np.concatenate([
-            cfg.mujoco.init_pos,           # (0.0, 0.0, 0.70)
-            cfg.mujoco.init_quat,          # (1.0, 0.0, 0.0, 0.0)
-            self.robot.default_joint_pos,  # (23,) standing pose
-        ])
-```
-
-**State Update (Sensors → RobotData):**
-```python
-def update_state(self) -> None:
-    """Extract state from MuJoCo simulation"""
-    # Joint state (skip first 7 qpos: 3 pos + 4 quat)
-    self.robot.data.joint_pos = torch.from_numpy(self.mj_data.qpos[7:])
-    self.robot.data.joint_vel = torch.from_numpy(self.mj_data.qvel[6:])
-
-    # Base state from IMU sensors
-    self.robot.data.root_pos_w = torch.from_numpy(self.mj_data.qpos[:3])
-    self.robot.data.root_quat_w = torch.from_numpy(
-        self.mj_data.sensor("orientation").data  # IMU quaternion
-    )
-    self.robot.data.root_lin_vel_b = torch.from_numpy(
-        self.mj_data.sensor("imu_lin_vel").data
-    )
-    self.robot.data.root_ang_vel_b = torch.from_numpy(
-        self.mj_data.sensor("imu_ang_vel").data
-    )
-
-    # Compute projected gravity from quaternion
-    self.robot.data.projected_gravity_b = compute_projected_gravity(
-        self.robot.data.root_quat_w
-    )
-```
-
-**Control Step (Position Actuators):**
-```python
-def ctrl_step(self, joint_targets: torch.Tensor) -> None:
-    """Apply joint position targets via MuJoCo position actuators.
-
-    MuJoCo applies internal PD control:
-        τ = Kp * (target - qpos) - Kd * qvel
-        τ = clamp(τ, -effort_limit, effort_limit)
-    """
-    targets = joint_targets.cpu().numpy()
-
-    # Run decimation steps (4x physics @ 200Hz per 1x policy @ 50Hz)
-    for _ in range(self.cfg.mujoco.decimation):
-        self.mj_data.ctrl[:] = targets  # Position targets
-        mujoco.mj_step(self.mj_model, self.mj_data)
-```
-
-### Task Registry and Auto-Registration
-
-**Registration System:**
-```python
-class TaskRegistry:
-    def __init__(self):
-        self._tasks: Dict[str, ControllerConfig] = {}
-        self._policies: Dict[str, type[Policy]] = {}
-
-    def register(self, task_name: str, config: ControllerConfig,
-                 policy_class: type[Policy]) -> None:
-        """Register complete task configuration"""
-        self._tasks[task_name] = config
-        self._policies[config.policy.task_name] = policy_class
-
-    def get_config(self, task_name: str) -> ControllerConfig:
-        return self._tasks[task_name]
-
-    def get_policy(self, policy_type: str) -> type[Policy]:
-        return self._policies[policy_type]
-
-# Global registry
-TASK_REGISTRY = TaskRegistry()
-```
-
-**Decorator-Based Registration:**
-```python
-# In tasks/velocity/deploy/t1_23dof/__init__.py
-from colosseum.deploy.core.registry import register_task
-
-@register_task("t1-velocity-rough")
-def register_rough_task():
-    return T1_23DOF_VELOCITY_ROUGH, T1VelocityPolicy
-
-@register_task("t1-velocity-flat")
-def register_flat_task():
-    return T1_23DOF_VELOCITY_FLAT, T1VelocityPolicy
-```
-
-**Auto-Discovery:**
-```python
-def auto_register_tasks() -> None:
-    """Scan and import all task deployment modules"""
-    # Finds: tasks/{task_name}/deploy/{robot}/__init__.py
-    # Example: tasks/velocity/deploy/t1_23dof/__init__.py
-    for init_file in tasks_dir.glob("*/deploy/*/__init__.py"):
-        module_path = convert_path_to_module(init_file)
-        importlib.import_module(module_path)  # Triggers @register_task
-```
-
-### Input System (Joystick and Keyboard)
-
-**Joystick Input (evdev-based):**
-```python
-class JoystickInputSource(BaseInputSource):
-    """Threaded evdev gamepad input with deadzone filtering"""
-
-    def _init_backend(self) -> None:
-        # Auto-detect joystick with required axes
-        self.device = find_joystick_device()
-
-        # Start polling thread for low-latency input
-        self.poll_thread = threading.Thread(
-            target=self._poll_loop,
-            daemon=True
-        )
-        self.poll_thread.start()
-
-    def _poll_loop(self) -> None:
-        """Event loop running in dedicated thread"""
-        while self._running:
-            event = self.device.read_one()
-            if event.type == evdev.ecodes.EV_ABS:
-                self._handle_axis(event.code, event.value)
-            elif event.type == evdev.ecodes.EV_KEY:
-                self._handle_button(event.code, event.value)
-
-    def get_vx_cmd(self) -> float:
-        """Thread-safe getter, applies deadzone, returns [-1, 1]"""
-        with self._lock:
-            raw = self._state.left_stick_y
-            if abs(raw) < self.config.control_threshold:
-                return 0.0
-            return raw
-```
-
-**Standard Gamepad Mapping:**
-```python
-# Default configuration (Xbox-compatible)
-InputConfig(
-    input_type="auto",           # Try joystick, fall back to keyboard
-    control_threshold=0.1,       # 10% deadzone
-    x_axis=ABS_Y,                # Left stick Y (forward/backward)
-    y_axis=ABS_X,                # Left stick X (left/right strafe)
-    yaw_axis=ABS_RX,             # Right stick X (yaw rotation)
-    custom_mode_button=BTN_A,    # Button A
-    rl_gait_button=BTN_B,        # Button B
-)
-```
+| Flag | Portal | Notes |
+|------|--------|-------|
+| `--backend booster` | `RobotPortal` | Real Booster T1 via DDS/SDK. Runs `prepare()` before loop. |
+| `--backend mujoco` | `MujocoPortal` | GLFW viewer. Composes scene+robot MJCF at runtime. Sets armature. |
+| `--backend circus` | `CircusPortal` | TCP/msgpack sim. Sends PD torques, receives state. |

@@ -26,3 +26,7 @@ site-packages/
 logs/
 wandb/
 .vscode/settings.json
+
+# Stuff
+output/
+local-channel/
