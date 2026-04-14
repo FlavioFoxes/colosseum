@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import torch
-from loguru import logger
-from mjlab.entity import Entity, EntityData
+from mjlab.entity import Entity
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers import SceneEntityCfg
 from mjlab.sensor import ContactSensor
 
-from colosseum.envs.abstraction_based_env import AbstractionBasedEnv
-from colosseum.tasks.maze.mdp.grid_abstraction import GridAbstraction
 from colosseum.tasks.maze.mdp.observations import (
-  agent_pos_local,
   agent_to_goal_vector,
   agent_vel,
   agent_z_vel,

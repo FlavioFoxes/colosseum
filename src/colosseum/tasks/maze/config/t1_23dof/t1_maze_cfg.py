@@ -17,9 +17,9 @@ from colosseum.robots.t1_23dof.sensors import (
   SELF_COLLISION_SENSOR,
   WALL_COLLISION_SENSOR,
 )
-from colosseum.tasks.maze.maps import MAPS
+from colosseum.tasks.maze.maps import PREDEFINED_MAPS, generate_map
 from colosseum.tasks.maze.maze import Maze, MazeCfg
-from colosseum.tasks.maze.mdp.grid_abstraction import GridAbstractionTermCfg
+from colosseum.tasks.maze.mdp.abstraction.grid_abstraction import GridAbstractionTermCfg
 from colosseum.tasks.maze.terrain import MazeTerrainEntityCfg
 
 from .algo_cfg import t1_maze_ppo_cfg
@@ -105,7 +105,8 @@ def t1_maze_env_cfg(
   """
   maze = Maze(
     MazeCfg(
-      maze_map=MAPS[scenario], cell_size=5.0, wall_height=2.0, wall_size_factor=1.0
+      # TODO we can inject the random map here
+      maze_map=PREDEFINED_MAPS[scenario], cell_size=5.0, wall_height=2.0, wall_size_factor=1.0
     )
   )
 

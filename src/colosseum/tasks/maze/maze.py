@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import torch
 
-from colosseum.tasks.maze.mdp.grid_frame import GridFrame
+from colosseum.tasks.maze.mdp.abstraction.grid_frame import GridFrame
 
 
 class Maze:

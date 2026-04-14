@@ -14,7 +14,7 @@ from colosseum.managers.abstraction_manager import (
   AbstractionTerm,
   AbstractionTermCfg,
 )
-from colosseum.tasks.maze.mdp.grid_frame import GridFrame
+from colosseum.tasks.maze.mdp.abstraction.grid_frame import GridFrame
 from colosseum.tasks.maze.mdp.observations import agent_pos_local
 
 if TYPE_CHECKING:
