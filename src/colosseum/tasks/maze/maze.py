@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import torch
 
 from colosseum.tasks.maze.mdp.abstraction.grid_frame import GridFrame
+from colosseum.tasks.maze.maps import ENCODING
 
 
 class Maze:
@@ -60,7 +61,8 @@ class Maze:
     if not (0 <= i < self.num_rows and 0 <= j < self.num_cols):
       return True
     cell = self.maze_map[i][j]
-    return cell in (1, "1", "W", "w")
+    # return cell in (1, "1", "W", "w")
+    return cell == ENCODING['WALL']
 
   def is_valid_cell(self, i: int, j: int) -> bool:
     return not self.is_wall(i, j)
@@ -112,9 +114,11 @@ class Maze:
     for i, row in enumerate(self.maze_map):
       for j, cell in enumerate(row):
         x_local, y_local = self.grid_to_local(i, j)
-        if cell in ("r", "R"):
+        # if cell in ("r", "R"):
+        if cell == ENCODING['ROBOT']:
           self.valid_reset_positions_local.append((x_local, y_local))
-        elif cell in ("g", "G"):
+        # elif cell in ("g", "G"):
+        elif cell == ENCODING['GOAL']:
           self.valid_goal_positions_local.append((x_local, y_local))
 
 
@@ -123,11 +127,7 @@ class MazeCfg:
   """Configuration for a Maze.
 
   Attributes:
-      maze_map: 2D list defining maze structure.
-          - 1, '1', 'W', 'w': Wall
-          - 0, '0': Empty cell
-          - 'r', 'R': Valid reset position
-          - 'g', 'G': Valid goal position
+      maze_map: 2D list defining maze structure; refer to the ENCODING for further information.
       cell_size: Size of each cell in meters.
       wall_height: Height of walls in meters.
       wall_size_factor: Fraction of cell size occupied by wall geometry.

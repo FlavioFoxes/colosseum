@@ -1,5 +1,6 @@
 from typing import Tuple, List, Set
 import random
+import re
 
 """
 Base algorithm:
@@ -34,14 +35,13 @@ Cell encoding:
   'r' / 'R':     Valid robot reset position
   'g' / 'G':     Valid goal position
 """
-# TODO uniform encoding
 ENCODING = {
     'WALL': '#',
     'EMPTY': '.',
     'ROBOT': 'r',
     'GOAL': '@',
     'BLOCK': 'b',
-    'ELBOW': 'e'
+    'ELBOW': '.'
 }
 
 """
@@ -81,27 +81,23 @@ assert GOAL_SPAWN_AREA_FRACTION_W + ROBOT_SPAWN_AREA_FRACTION_W <= 1
 assert GOAL_SPAWN_AREA_FRACTION_H + ROBOT_SPAWN_AREA_FRACTION_H <= 1
 
 """
-Maximum and minimum grid sizes. The minimum takes into account that:
+Maximum and minimum grid sizes. We need to take into account that:
 - we need to have at least a 1-cell border around the maze 
     (2 cells width/height reserved for this)
 - we need to leave space for the path elbows
     (2 cells width/height reserved for this)
-This means the effective minimum size of the maze will be:
+The cells introduced for the elbows are effectively playable, so the
+effective playable grid size will simply be:
 
-    MIN_GRID_WIDTH - 4
-    MIN_GRID_HEIGHT - 4
-
-"""
-MIN_GRID_WIDTH, MAX_GRID_WIDTH = 12, 30
-MIN_GRID_HEIGHT, MAX_GRID_HEIGHT = 12, 30
+    MIN_GRID_WIDTH - 2
+    MIN_GRID_HEIGHT - 2
 
 """
-Enhanced algorithm parameters
-"""
-NUM_ROAD_ITERATIONS = 3
-EROSION_STRENGTH = 0.05
-DEPOSITION_STRENGTH = 0.05
+MIN_GRID_WIDTH, MAX_GRID_WIDTH = 6, 30
+MIN_GRID_HEIGHT, MAX_GRID_HEIGHT = 6, 30
 
+
+# Maze generation
 
 def pretty_print(maze: List[List]):
     for y in range(len(maze)):
@@ -386,11 +382,16 @@ def lerw_path(
     return path
 
 
-def apply_erosion(maze: List[List]):
+def apply_erosion(maze: List[List], strength: float):
     """Randomly remove walls to increase complexity and open up the maze"""
 
     height, width = len(maze), len(maze[0])
-    num_cells_to_erode = int(height * width * EROSION_STRENGTH)
+    playable_cells = sum([
+        1 if maze[r][c] == ENCODING['EMPTY'] or maze[r][c] == ENCODING['ELBOW'] else 0
+        for c in range(width) for r in range(height)
+    ]
+    )
+    num_cells_to_erode = int(playable_cells * strength)
 
     while num_cells_to_erode > 0:
 
@@ -428,7 +429,7 @@ def apply_erosion(maze: List[List]):
         num_cells_to_erode -= 1
 
 
-def apply_deposition(maze: List[List]):
+def apply_deposition(maze: List[List], strength: float):
     raise ValueError("Not implemented")
 
 
@@ -458,17 +459,23 @@ def add_borders(maze: List[List]):
     return new_maze
 
 
-def generate_map(
+def generate_maze(
         height: int,
         width: int,
         erosion: bool = False,
         deposition: bool = False,
+        num_road_iterations: int = 1,
+        erosion_strength: float = 0.5,
+        deposition_strength: float = 0.05,
+        seed: int = None,
         **kwargs
 ) -> List[List]:
     """
     Generate a random maze using recursive backtracking.
     The maze will feature a single block and a single goal position.
     """
+
+    random.seed(seed)
 
     assert MIN_GRID_WIDTH <= width <= MAX_GRID_WIDTH, f"Maze width out of bounds({width}), should be {MIN_GRID_WIDTH} <= x <= {MAX_GRID_WIDTH}."
     assert MIN_GRID_HEIGHT <= height <= MAX_GRID_HEIGHT, f"Maze height out of bounds ({height}), should be {MIN_GRID_HEIGHT} <= y <= {MAX_GRID_HEIGHT}."
@@ -494,7 +501,7 @@ def generate_map(
 
     # Build roads connecting start to goal
     paths = []
-    for _ in range(NUM_ROAD_ITERATIONS):
+    for _ in range(num_road_iterations):
         path = lerw_path(workable_maze, robot_position, goal_position, **kwargs)
         paths.append(path)
 
@@ -528,11 +535,11 @@ def generate_map(
     # Apply erosion. This does not invalidate any solution to the problem,
     # it just adds maze complexity
     if erosion:
-        apply_erosion(full_maze)
+        apply_erosion(full_maze, erosion_strength)
 
     # Apply deposition
     if deposition:
-        apply_deposition(full_maze)
+        apply_deposition(full_maze, deposition_strength)
 
     # Any free cell at this point is a candidate for the block,
     # but we need to carefully analyze where to put it as this can
@@ -558,70 +565,371 @@ def generate_map(
     return full_maze
 
 
-"""
-Collection of predefined maps
-"""
+def generate_base_maze(
+        height: int,
+        width: int,
+        erosion: bool = False,
+        deposition: bool = False,
+        num_road_iterations: int = 1,
+        erosion_strength: float = 0.5,
+        deposition_strength: float = 0.05,
+        seed: int = None,
+        **kwargs
+    ):
+    """
+    Similar to generate_maze, but does NOT place a box.
+    Returns (base_maze, box_cells) so callers can inject any valid box position.
 
-# TODO uniform encoding
+    box_cells is the set of elbow-joint cells (turn points on the path),
+    which guarantees solvability when a box is placed there.
+    Cells that coincide with robot_position or goal_position are excluded.
+    """
+
+    random.seed(seed)
+
+    assert MIN_GRID_WIDTH <= width <= MAX_GRID_WIDTH, f"Maze width out of bounds({width}), should be {MIN_GRID_WIDTH} <= x <= {MAX_GRID_WIDTH}."
+    assert MIN_GRID_HEIGHT <= height <= MAX_GRID_HEIGHT, f"Maze height out of bounds ({height}), should be {MIN_GRID_HEIGHT} <= y <= {MAX_GRID_HEIGHT}."
+
+    full_width, full_height = width, height
+    workable_width, workable_height = width - 4, height - 4
+
+    # Generate a grid full of wall cells
+    full_maze = [[ENCODING['WALL'] for _ in range(full_width)] for _ in range(full_height)]
+    workable_maze = [[ENCODING['WALL'] for _ in range(workable_width)] for _ in range(workable_height)]
+
+    # Define robot position
+    robot_x = int(random.random() * ROBOT_SPAWN_AREA_FRACTION_W * workable_width)
+    robot_y = int(random.random() * ROBOT_SPAWN_AREA_FRACTION_H * workable_height)
+    robot_position = (robot_x, robot_y)
+    workable_maze[robot_x][robot_y] = ENCODING['ROBOT']
+
+    # Define goal position
+    goal_x = workable_width - int(random.random() * GOAL_SPAWN_AREA_FRACTION_W * workable_width) - 1
+    goal_y = workable_height - int(random.random() * GOAL_SPAWN_AREA_FRACTION_H * workable_height) - 1
+    goal_position = (goal_x, goal_y)
+    workable_maze[goal_x][goal_y] = ENCODING['GOAL']
+
+    # Build roads connecting start to goal
+    paths = [
+        lerw_path(workable_maze, robot_position, goal_position, **kwargs)
+        for _ in range(num_road_iterations)
+    ]
+
+    # Get elbow cells and box candidate cells
+    elbows = [add_elbows(p) for p in paths]
+    boxes = [get_box_candidate_positions(p) for p in paths]
+
+    path_cells = {cell for path  in paths  for cell in path}
+    elbow_cells = {cell for elbow in elbows for cell in elbow}
+    box_cells = (
+        {cell for box in boxes for cell in box}
+        - {robot_position}
+        - {goal_position}
+    )
+
+    # Dump all the stuff on the new maze
+    full_maze[robot_x + 2][robot_y + 2] = ENCODING['ROBOT']
+    full_maze[goal_x + 2][goal_y + 2] = ENCODING['GOAL']
+
+    for cell in path_cells | elbow_cells:
+        if cell in (robot_position, goal_position):
+            continue
+        row, col = cell
+        full_maze[row + 2][col + 2] = (
+            ENCODING['EMPTY'] if cell in path_cells else ENCODING['ELBOW']
+        )
+
+    # Apply erosion. This does not invalidate any solution to the problem,
+    # it just adds maze complexity
+    if erosion:
+        apply_erosion(full_maze, erosion_strength)
+
+    # Apply deposition
+    if deposition:
+        apply_deposition(full_maze, deposition_strength)
+
+    # Enforce borders (erosion could breach the maze)
+    for r in range(full_height):
+        full_maze[r][0] = ENCODING['WALL']
+        full_maze[r][full_width -1] = ENCODING['WALL']
+    for c in range(full_width):
+        full_maze[0][c] = ENCODING['WALL']
+        full_maze[full_height - 1][c] = ENCODING['WALL']
+
+    # Translate box_cells to full-maze coordinates (+2 offset)
+    box_cells_full = {(r + 2, c + 2) for (r, c) in box_cells}
+
+    return full_maze, box_cells_full
+
+
+def generate_empty_maze(
+    height: int,
+    width: int,
+    erosion: bool = False,
+    deposition: bool = False,
+    num_road_iterations: int = 1,
+    erosion_strength: float = 0.5,
+    deposition_strength: float = 0.05,
+    seed: int = None,
+    **kwargs
+):
+    """
+    Similar to generate_maze, but doesn't place robot, goal or box.
+    Returns base_maze so callers can inject any robot, goal or box position.
+    """
+
+    random.seed(seed)
+
+    assert MIN_GRID_WIDTH <= width <= MAX_GRID_WIDTH, f"Maze width out of bounds({width}), should be {MIN_GRID_WIDTH} <= x <= {MAX_GRID_WIDTH}."
+    assert MIN_GRID_HEIGHT <= height <= MAX_GRID_HEIGHT, f"Maze height out of bounds ({height}), should be {MIN_GRID_HEIGHT} <= y <= {MAX_GRID_HEIGHT}."
+
+    full_width, full_height = width, height
+    workable_width, workable_height = width - 4, height - 4
+
+    # Generate a grid full of wall cells
+    full_maze = [[ENCODING['WALL'] for _ in range(full_width)] for _ in range(full_height)]
+    workable_maze = [[ENCODING['WALL'] for _ in range(workable_width)] for _ in range(workable_height)]
+
+    # Define robot position
+    robot_x = int(random.random() * ROBOT_SPAWN_AREA_FRACTION_W * workable_width)
+    robot_y = int(random.random() * ROBOT_SPAWN_AREA_FRACTION_H * workable_height)
+    robot_position = (robot_x, robot_y)
+
+    # Define goal position
+    goal_x = workable_width - int(random.random() * GOAL_SPAWN_AREA_FRACTION_W * workable_width) - 1
+    goal_y = workable_height - int(random.random() * GOAL_SPAWN_AREA_FRACTION_H * workable_height) - 1
+    goal_position = (goal_x, goal_y)
+
+    # Build roads connecting start to goal
+    paths = [
+        lerw_path(workable_maze, robot_position, goal_position, **kwargs)
+        for _ in range(num_road_iterations)
+    ]
+
+    # Get elbow cells
+    elbows = [add_elbows(p) for p in paths]
+
+    path_cells = {cell for path  in paths  for cell in path}
+    elbow_cells = {cell for elbow in elbows for cell in elbow}
+
+    # Dump all the stuff on the new maze
+    for cell in path_cells | elbow_cells:
+        if cell in (robot_position, goal_position):
+            continue
+        row, col = cell
+        full_maze[row + 2][col + 2] = (
+            ENCODING['EMPTY'] if cell in path_cells else ENCODING['ELBOW']
+        )
+
+    # Apply erosion. This does not invalidate any solution to the problem,
+    # it just adds maze complexity
+    if erosion:
+        apply_erosion(full_maze, erosion_strength)
+
+    # Apply deposition
+    if deposition:
+        apply_deposition(full_maze, deposition_strength)
+
+    # Enforce borders (erosion could breach the maze)
+    for r in range(full_height):
+        full_maze[r][0] = ENCODING['WALL']
+        full_maze[r][full_width -1] = ENCODING['WALL']
+    for c in range(full_width):
+        full_maze[0][c] = ENCODING['WALL']
+        full_maze[full_height - 1][c] = ENCODING['WALL']
+
+    return full_maze
+
+
+# Simulate plan
+
+def parse_plan_action(action_string: str) -> Tuple[str, List[str]]:
+    # Extract action name and parameters
+    # Example: "push-box(loc-4-5, loc-13-7, loc-13-6, loc-13-5)"
+    match = re.match(r'([\w-]+)\((.*)\)', action_string.strip())
+    if not match:
+        return None, None
+
+    action_name = match.group(1)
+    params_str = match.group(2)
+    params = [p.strip() for p in params_str.split(',')]
+
+    return action_name, params
+
+
+def location_to_coords(loc_id) -> Tuple[int, int]:
+    # Convert "loc-x-y" to (x, y)
+    parts = str(loc_id).split('-')
+    x, y = int(parts[1]), int(parts[2])
+    return x, y
+
+
+def simulate_plan(initial_board: List[List[str]], plan_actions: List) -> List[List[List[str]]]:
+    # Track goal positions separately so they persist when blocks move
+    height, width = len(initial_board), len(initial_board[0])
+    goal_positions = set()
+
+    for y in range(height):
+        for x in range(width):
+            if initial_board[y][x] == ENCODING['GOAL']:
+                goal_positions.add((x, y))
+
+    # Initialize with the starting board state
+    board_states = []
+    current_board = [row[:] for row in initial_board]  # Deep copy
+    board_states.append([row[:] for row in current_board])
+
+    # Process each action
+    for action in plan_actions:
+
+        # action_name = action.action.name
+        # params = action.action.parameters
+        action_name, params = parse_plan_action(str(action))
+        print(f"Action name: {action_name}")
+        print(f"Action params: {params}")
+        print()
+
+        if action_name == "push-box":
+            # Handle both 3-param (no axioms) and 4-param (with axioms) versions
+            if len(params) == 3:
+                # Without axioms: push-box(x, y, z)
+                # x = robot position, y = box position, z = new box position
+                x, y, z = params
+                x_coords = location_to_coords(x)
+                y_coords = location_to_coords(y)
+                z_coords = location_to_coords(z)
+
+                # Clear old player position (restore goal if it was there)
+                if x_coords in goal_positions:
+                    current_board[x_coords[1]][x_coords[0]] = ENCODING['GOAL']
+                else:
+                    current_board[x_coords[1]][x_coords[0]] = ENCODING['EMPTY']
+
+                # Clear old box position (restore goal if it was there)
+                if y_coords in goal_positions:
+                    current_board[y_coords[1]][y_coords[0]] = ENCODING['GOAL']
+                else:
+                    current_board[y_coords[1]][y_coords[0]] = ENCODING['EMPTY']
+
+                # Move player to y position
+                current_board[y_coords[1]][y_coords[0]] = ENCODING['ROBOT']
+
+                # Move box to z position
+                current_board[z_coords[1]][z_coords[0]] = ENCODING['BLOCK']
+
+            elif len(params) == 4:
+                # With axioms: push-box(l, x, y, z)
+                # l = reachable position, x = position adjacent to box, y = box position, z = new box position
+                l, x, y, z = params
+                x_coords = location_to_coords(x)
+                y_coords = location_to_coords(y)
+                z_coords = location_to_coords(z)
+
+                # Clear old player position (restore goal if it was there)
+                # Note: player could be anywhere reachable, we find it on the board
+                # For now, assume player is at x (adjacent to box)
+                if x_coords in goal_positions:
+                    current_board[x_coords[1]][x_coords[0]] = ENCODING['GOAL']
+                else:
+                    current_board[x_coords[1]][x_coords[0]] = ENCODING['EMPTY']
+
+                # Clear old box position (restore goal if it was there)
+                if y_coords in goal_positions:
+                    current_board[y_coords[1]][y_coords[0]] = ENCODING['GOAL']
+                else:
+                    current_board[y_coords[1]][y_coords[0]] = ENCODING['EMPTY']
+
+                # Move player to y position
+                current_board[y_coords[1]][y_coords[0]] = ENCODING['ROBOT']
+
+                # Move box to z position
+                current_board[z_coords[1]][z_coords[0]] = ENCODING['BLOCK']
+
+        elif action_name == "move":
+            # Parameters: fr (from location), to (to location)
+            if len(params) == 2:
+                fr, to = params
+                fr_coords = location_to_coords(fr)
+                to_coords = location_to_coords(to)
+
+                # Clear old position (restore goal if it was there)
+                if fr_coords in goal_positions:
+                    current_board[fr_coords[1]][fr_coords[0]] = ENCODING['GOAL']
+                else:
+                    current_board[fr_coords[1]][fr_coords[0]] = ENCODING['EMPTY']
+
+                # Move player to new position
+                current_board[to_coords[1]][to_coords[0]] = ENCODING['ROBOT']
+
+        # Add current board state to history
+        board_states.append([row[:] for row in current_board])
+
+    return board_states
+
+
+"""
+Collection of predefined maps.
+WARN: these should be defined according to the ENCODING.
+"""
 
 UMAZE = [
-  [1, 1,  1,  1,  1],
-  [1,"g", 0, "g", 1],
-  [1, 1,  1, "g", 1],
-  [1,"r", 0,  0,  1],
-  [1, 1,  1,  1,  1],
+  ['#', '#', '#', '#', '#'],
+  ['#', '@', '.', '@', '#'],
+  ['#', '#', '#', '@', '#'],
+  ['#', 'r', '.', '.', '#'],
+  ['#', '#', '#', '#', '#'],
 ]
 
 UMAZE_TEST = [
-  [1,  1,  1,  1,  1],
-  [1,  0, "g", 0,  1],
-  [1,  1,  1,  0,  1],
-  [1, "r", 0, "g", 1],
-  [1,  1,  1,  1,  1],
+  ['#', '#', '#', '#', '#'],
+  ['#', '.', '@', '.', '#'],
+  ['#', '#', '#', '.', '#'],
+  ['#', 'r', '.', '@', '#'],
+  ['#', '#', '#', '#', '#'],
 ]
 
 SMALL_MAZE = [
-  [1, 1, 1, 1, 1, 1, 1],
-  [1, "r", 0, 1, "g", 0, 1],
-  [1, 0, 0, 1, 0, 0, 1],
-  [1, 1, 0, 1, 0, 1, 1],
-  [1, 0, 0, 0, 0, 0, 1],
-  [1, 0, 1, 1, 1, "g", 1],
-  [1, 1, 1, 1, 1, 1, 1],
+  ['#', '#', '#', '#', '#', '#', '#'],
+  ['#', 'r', '.', '#', '@', '.', '#'],
+  ['#', '.', '.', '#', '.', '.', '#'],
+  ['#', '#', '.', '#', '.', '#', '#'],
+  ['#', '.', '.', '.', '.', '.', '#'],
+  ['#', '.', '#', '#', '#', '@', '#'],
+  ['#', '#', '#', '#', '#', '#', '#'],
 ]
 
 MEDIUM_MAZE = [
-  [1, 1, 1, 1, 1, 1, 1, 1],
-  [1, "r", 0, 1, 1, 0, 0, 1],
-  [1, 0, 0, 1, 0, 0, 0, 1],
-  [1, 1, 0, 0, 0, 1, 1, 1],
-  [1, 0, 0, 1, 0, 0, 0, 1],
-  [1, "g", 1, 1, 0, 1, 0, 1],
-  [1, 0, 0, 0, 0, 1, "g", 1],
-  [1, 1, 1, 1, 1, 1, 1, 1],
+  ['#', '#', '#', '#', '#', '#', '#', '#'],
+  ['#', 'r', '.', '#', '#', '.', '.', '#'],
+  ['#', '.', '.', '#', '.', '.', '.', '#'],
+  ['#', '#', '.', '.', '.', '#', '#', '#'],
+  ['#', '.', '.', '#', '.', '.', '.', '#'],
+  ['#', '@', '#', '#', '.', '#', '.', '#'],
+  ['#', '.', '.', '.', '.', '#', '@', '#'],
+  ['#', '#', '#', '#', '#', '#', '#', '#'],
 ]
 
 LARGE_MAZE = [
-  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-  [1, "r", 0, 0, 0, 1, "g", 0, 0, 0, 0, 1],
-  [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-  [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
-  [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
-  [1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
-  [1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1],
-  [1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
-  [1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1],
-  [1, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1],
-  [1, 0, 0, 0, 0, 0, 1, "g", 0, 0, 0, 1],
-  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+  ['#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#'],
+  ['#', 'r', '.', '.', '.', '#', '@', '.', '.', '.', '.', '#'],
+  ['#', '.', '#', '#', '.', '#', '.', '#', '.', '#', '.', '#'],
+  ['#', '.', '.', '.', '.', '.', '.', '#', '.', '.', '.', '#'],
+  ['#', '.', '#', '#', '#', '#', '.', '#', '#', '#', '.', '#'],
+  ['#', '.', '.', '#', '.', '.', '.', '.', '#', '.', '.', '#'],
+  ['#', '#', '.', '#', '.', '#', '#', '.', '.', '.', '#', '#'],
+  ['#', '.', '.', '#', '.', '.', '.', '.', '#', '.', '.', '#'],
+  ['#', '.', '#', '.', '.', '#', '#', '#', '#', '#', '.', '#'],
+  ['#', '.', '#', '#', '#', '.', '.', '.', '.', '#', '.', '#'],
+  ['#', '.', '.', '.', '.', '.', '#', '@', '.', '.', '.', '#'],
+  ['#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#'],
 ]
 
 OPEN = [
-  [1, 1, 1, 1, 1],
-  [1, "r", 0, 0, 1],
-  [1, 0, 0, 0, 1],
-  [1, 0, 0, "g", 1],
-  [1, 1, 1, 1, 1],
+  ['#', '#', '#', '#', '#'],
+  ['#', 'r', '.', '.', '#'],
+  ['#', '.', '.', '.', '#'],
+  ['#', '.', '.', '@', '#'],
+  ['#', '#', '#', '#', '#'],
 ]
 
 PREDEFINED_MAPS = {
