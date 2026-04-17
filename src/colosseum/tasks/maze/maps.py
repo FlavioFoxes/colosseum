@@ -765,6 +765,12 @@ def location_to_coords(loc_id) -> Tuple[int, int]:
 
 
 def simulate_plan(initial_board: List[List[str]], plan_actions: List) -> List[List[List[str]]]:
+    """
+    Given a plan, start from the initial board configuration and apply the plan actions one by one,
+    storing the resulting state of the board each time. Returns a complete list from initial board
+    configuration to the terminal state, resulting from the application of the complete action list.
+    """
+
     # Track goal positions separately so they persist when blocks move
     height, width = len(initial_board), len(initial_board[0])
     goal_positions = set()
@@ -865,6 +871,66 @@ def simulate_plan(initial_board: List[List[str]], plan_actions: List) -> List[Li
         board_states.append([row[:] for row in current_board])
 
     return board_states
+
+
+def plan_to_simple_steps(plan_actions: List) -> List[str]:
+    """
+    Converts a list of plan actions into a sequence of simple directional steps.
+
+    - Move actions
+        before: "move l1 l2"
+        after: "up" / "down" / "left" / "right"
+    - Push-box actions
+        before: "push-box l1 l2"
+        after: "move_up" / "move_down" / "move_left" / "move_right"
+
+    Supports both 3-param push-box(robot, box, new_box)
+    and 4-param push-box(reachable, robot, box, new_box).
+    """
+
+    direction_map = {
+        (0, -1): ("up", "move_up"),
+        (0, 1): ("down", "move_down"),
+        (-1, 0): ("left", "move_left"),
+        (1, 0): ("right", "move_right"),
+    }
+
+    steps = []
+
+    for action in plan_actions:
+        action_name, params = parse_plan_action(str(action))
+
+        if action_name == "move":
+            if len(params) != 2:
+                raise ValueError(f"Expected 2 params for move, got {len(params)}: {params}")
+            fr_coords = location_to_coords(params[0])
+            to_coords = location_to_coords(params[1])
+            delta = (to_coords[0] - fr_coords[0], to_coords[1] - fr_coords[1])
+            if delta not in direction_map:
+                raise ValueError(f"Non-cardinal move delta {delta} in action: {action}")
+            steps.append(direction_map[delta][0])  # plain movement
+
+        elif action_name == "push-box":
+            if len(params) == 3:
+                # push-box(robot, box, new_box)
+                box_coords = location_to_coords(params[1])
+                new_box_coords = location_to_coords(params[2])
+            elif len(params) == 4:
+                # push-box(reachable, robot, box, new_box)
+                box_coords = location_to_coords(params[2])
+                new_box_coords = location_to_coords(params[3])
+            else:
+                raise ValueError(f"Expected 3 or 4 params for push-box, got {len(params)}: {params}")
+
+            delta = (new_box_coords[0] - box_coords[0], new_box_coords[1] - box_coords[1])
+            if delta not in direction_map:
+                raise ValueError(f"Non-cardinal push delta {delta} in action: {action}")
+            steps.append(direction_map[delta][1])  # push movement
+
+        else:
+            raise ValueError(f"Unknown action: {action_name}")
+
+    return steps
 
 
 """
