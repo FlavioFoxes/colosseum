@@ -23,6 +23,7 @@ class BaseExperimentConfig:
     cuda: str = "0"
     checkpoint: str | None = None
     obstacle_stage_index: int = -1
+    maze_phase_index: int = -1
 
     task: Annotated[
         TaskConfig,

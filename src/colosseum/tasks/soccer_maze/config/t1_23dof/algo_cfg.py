@@ -8,7 +8,7 @@ def t1_soccer_maze_ppo_cfg() -> PpoConfig:
   return PpoConfig(
     name="PPO",
     target="colosseum.algorithm.ppo:PPO",
-    learning_steps=500_000_000,
+    learning_steps=70_000_000,
     num_steps_per_env=24,
     gamma=0.99,
     lam=0.95,

@@ -32,20 +32,30 @@ def ball_vel_command_body(env: ManagerBasedRlEnv, command_name: str) -> torch.Te
   return quat_apply(quat_conj, cmd_3d)[:, :2]  # [N, 2]
 
 
-def obstacle_map(env: ManagerBasedRlEnv, abstraction_name: str) -> torch.Tensor:
-  """Flattened obstacle mask as bird's-eye view of the maze. Shape [N, rows*cols].
+def obstacle_map(
+  env: ManagerBasedRlEnv,
+  abstraction_name: str,
+  max_cells: int | None = None,
+) -> torch.Tensor:
+  """Flattened obstacle mask as bird's-eye view of the maze. Shape [N, max_cells].
 
   Each element is 1.0 (wall) or 0.0 (free).  The mask is env-independent so the
   same tensor is broadcast across all environments.  Row-major order: element
   [i * cols + j] corresponds to grid cell (i, j).
 
-  This is a privileged observation — add it to critic_terms only.
+  If max_cells is given the output is zero-padded to that length, keeping the
+  observation dimension constant across maze sizes (required for curriculum
+  checkpoint loading).
+
+  This is a privileged observation — add it to privileged_maze_terms only.
   """
   assert hasattr(env, "abstraction_manager")
   abstraction = env.abstraction_manager.get_term(abstraction_name)
   assert isinstance(abstraction, GridAbstraction)
   flat = abstraction.map.float().flatten()  # [rows*cols]
-  return flat.unsqueeze(0).expand(env.num_envs, -1)  # [N, rows*cols]
+  if max_cells is not None and flat.shape[0] < max_cells:
+    flat = torch.nn.functional.pad(flat, (0, max_cells - flat.shape[0]))
+  return flat.unsqueeze(0).expand(env.num_envs, -1)  # [N, max_cells]
 
 
 def robot_vel_command(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:

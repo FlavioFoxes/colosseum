@@ -50,15 +50,12 @@ def _resolve_checkpoint(checkpoint: str | None) -> Path | None:
             return get_latest_checkpoint(p)
         return p if p.exists() else None
 
-    latest_run = Path("./logs") / "wandb" / "latest-run"
-    ckpt_dir = latest_run / "checkpoints"
-    if ckpt_dir.exists():
-        latest_link = ckpt_dir / "latest.pt"
-        if latest_link.exists():
-            return latest_link
-        return get_latest_checkpoint(ckpt_dir)
-
-    return None
+    # Find the most recently modified latest.pt under any wandb run in ./logs/
+    candidates = sorted(
+        Path("./logs").glob("**/checkpoints/latest.pt"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    return candidates[-1] if candidates else None
 
 
 def _make_env(env_cfg: ManagerBasedRlEnvCfg, device: str, render_mode: str | None) -> ManagerBasedRlEnv:
@@ -127,8 +124,11 @@ def create_agent(config: PlayConfig, env: ManagerBasedRlEnv, device: torch.devic
             log_fn=lambda _m, _s: None,
             log_interval=-1,
         )
-        state = algo.load(checkpoint_path)
-        logger.info(f"Loaded from step {state.get('global_step', 0)}")
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        logger.success(f"Checkpoint loaded: {checkpoint_path}")
+        algo.actor.load_state_dict(checkpoint["actor_state_dict"])
+        algo.actor_obs_normalizer.load_state_dict(checkpoint["actor_obs_normalizer_state_dict"])
+        logger.info(f"Loaded from step {checkpoint.get('global_step', 0)}")
 
         algo.actor.eval()
         algo.actor_obs_normalizer.eval()
@@ -154,6 +154,11 @@ def main() -> None:
         config = replace(
             config,
             task=replace(config.task, obstacle_stage_index=config.obstacle_stage_index),
+        )
+    if hasattr(config.task, "maze_phase_index") and config.maze_phase_index >= 0:
+        config = replace(
+            config,
+            task=replace(config.task, maze_phase_index=config.maze_phase_index),
         )
 
     device_id = _parse_single_cuda_device(config.cuda)

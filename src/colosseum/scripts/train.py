@@ -117,6 +117,11 @@ def main() -> None:
             config,
             task=replace(config.task, obstacle_stage_index=config.obstacle_stage_index),
         )
+    if hasattr(config.task, "maze_phase_index"):
+        config = replace(
+            config,
+            task=replace(config.task, maze_phase_index=config.maze_phase_index),
+        )
 
     cuda_devices = _parse_cuda_devices(config.cuda)
 
@@ -279,6 +284,7 @@ def main() -> None:
             world_size=world_size,
             phase=1,
             obstacle_stage_index=config.obstacle_stage_index,
+            maze_phase_index=config.maze_phase_index,
         )
 
         if is_main_process and run_dir is not None and config.logger.save_interval > 0:

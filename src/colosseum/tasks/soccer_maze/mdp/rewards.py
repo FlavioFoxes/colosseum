@@ -22,6 +22,7 @@ import math
 from typing import TYPE_CHECKING
 
 import torch
+from mjlab.sensor import ContactSensor
 from mjlab.utils.lab_api.math import quat_apply
 
 from colosseum.mdp.abstraction.maze.sokoban_grid_abstraction import SokobanGridAbstraction
@@ -227,7 +228,7 @@ def lateral_velocity_penalty_push(
 def ball_displacement_push(
   env: ManagerBasedRlEnv,
   command_name: str,
-  cell_size: float = 2.0,
+  cell_size: float = 1.0,
 ) -> torch.Tensor:
   """Ball progress toward target cell during PUSH, normalized to [0, 1].
 
@@ -396,3 +397,85 @@ def no_ball_contact_push(
   )
 
   return -(env._no_ball_contact_steps >= window_steps).float()
+
+
+def ball_overshoot_penalty(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  cell_size: float = 1.0,
+) -> torch.Tensor:
+  """Penalise ball displacement past the target cell during PUSH.
+
+  Once the ball has travelled more than cell_size metres in the push direction
+  from its kick-start position, every additional metre costs 1.0 per step.
+  Counterpart to ball_displacement_push: together they create a "just right"
+  zone — the robot must kick far enough to reach the target but not so hard
+  that the ball overshoots into the next cell.
+  """
+  sokoban = _sokoban(env, command_name)
+  ball_pos = env.scene["ball"].data.root_link_pos_w[:, :2]
+  displacement = ball_pos - sokoban.push_start_ball_pos
+  push_dir = sokoban.ball_vel / sokoban.ball_vel.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+  progress = (displacement * push_dir).sum(dim=-1)
+  overshoot = (progress - cell_size).clamp(min=0.0)
+  return -overshoot * sokoban.is_push.float()
+
+
+def second_ball_contact_penalty(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  sensor_name: str,
+  force_threshold: float = 1.0,
+  ball_speed_threshold: float = 0.1,
+) -> torch.Tensor:
+  """Per-step penalty when the robot touches the ball a second time during PUSH.
+
+  Once the ball is moving AND the foot has broken contact (clean break), any
+  subsequent foot-ball contact costs -1.0 per step.  This teaches the robot
+  to make one clean kick and step back, rather than chasing and re-kicking.
+
+  The clean-break flag resets when the PUSH phase ends so it doesn't carry
+  over into MOVE phases or the next PUSH action.
+  """
+  sokoban = _sokoban(env, command_name)
+
+  if not hasattr(env, "_kick_clean_break"):
+    env._kick_clean_break = torch.zeros(  # type: ignore[attr-defined]
+      env.num_envs, dtype=torch.bool, device=env.device
+    )
+
+  ball_speed = env.scene["ball"].data.root_link_lin_vel_w[:, :2].norm(dim=-1)
+  ball_moving = ball_speed > ball_speed_threshold
+
+  sensor: ContactSensor = env.scene[sensor_name]
+  force_magnitude = sensor.data.force.norm(dim=-1).amax(dim=-1)  # [N]
+  has_contact = force_magnitude > force_threshold
+
+  env._kick_clean_break = torch.where(  # type: ignore[attr-defined]
+    sokoban.is_push,
+    env._kick_clean_break | (ball_moving & ~has_contact),
+    torch.zeros_like(env._kick_clean_break),
+  )
+
+  return -(env._kick_clean_break & has_contact).float()  # type: ignore[return-value]
+
+
+def ball_stationary_at_target(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  threshold: float = 0.4,
+  speed_threshold: float = 0.1,
+) -> torch.Tensor:
+  """Reward ball resting near the PUSH target cell center.
+
+  Fires only when the ball is both close to the target cell center AND
+  approximately stationary.  Teaches the robot to calibrate kick impulse:
+  the ball must travel exactly one cell and stop, not merely pass through.
+  """
+  sokoban = _sokoban(env, command_name)
+  ball_xy = env.scene["ball"].data.root_link_pos_w[:, :2]
+  ball_speed = env.scene["ball"].data.root_link_lin_vel_w[:, :2].norm(dim=-1)
+  dist = (ball_xy - sokoban.push_target_pos).norm(dim=-1)
+  at_target = (dist < threshold).float()
+  stationary = (ball_speed < speed_threshold).float()
+  return at_target * stationary * sokoban.is_push.float()

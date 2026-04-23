@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-
 from colosseum.mdp.abstraction.maze.sokoban_grid_abstraction import (
   SokobanGridAbstraction,
 )

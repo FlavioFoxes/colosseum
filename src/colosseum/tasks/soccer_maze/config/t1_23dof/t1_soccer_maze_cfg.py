@@ -6,7 +6,7 @@ current position.  The robot is rewarded for pushing the ball in the direction
 indicated by the abstraction and for aligning its own heading accordingly.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
@@ -107,8 +107,20 @@ def abstractions_cfg(
   }
 
 
+# Ordered curriculum phases: (scenario_name, description)
+MAZE_PHASES: list[tuple[str, str]] = [
+  ("push_only",   "single PUSH, robot pre-positioned behind ball"),
+  ("open",        "3×3 interior, no internal walls"),
+  ("open_medium", "5×5 interior, no internal walls"),
+  ("small",       "5×5 interior with maze walls"),
+  ("medium",      "6×6 interior with maze walls"),
+  ("large",       "10×10 interior with maze walls"),
+]
+
+
 def t1_soccer_maze_env_cfg(
   scenario: str = "umaze",
+  maze_phase_index: int = -1,
   num_envs: int = 64,
   resolution_factor: int = 1,
   wall_center_weight: float = 2.0,
@@ -118,11 +130,22 @@ def t1_soccer_maze_env_cfg(
 
   Args:
       scenario: Maze layout key from MAPS (e.g. "umaze", "small", "medium").
+          Ignored when maze_phase_index >= 0.
+      maze_phase_index: Manual curriculum phase (0-4).  When >= 0 overrides
+          ``scenario`` with the corresponding entry from MAZE_PHASES.
       num_envs: Number of parallel environments.
       resolution_factor: Upsampling factor for the grid abstraction.
       wall_center_weight: Weight for wall-center cells in the harmonic field.
       play: If True, configures for single-env visualization.
   """
+  if maze_phase_index >= 0:
+    if maze_phase_index >= len(MAZE_PHASES):
+      raise ValueError(
+        f"maze_phase_index={maze_phase_index} out of range "
+        f"(0..{len(MAZE_PHASES) - 1})."
+      )
+    scenario = MAZE_PHASES[maze_phase_index][0]
+
   maze = Maze(
     MazeCfg(
       maze_map=MAPS[scenario], cell_size=1.0, wall_height=1.2, wall_size_factor=1.0
@@ -161,14 +184,16 @@ def t1_soccer_maze_env_cfg(
 class T1SoccerMazeTask(TaskConfig):
   name: str = "t1-soccer-maze"
   env: ConstraintAbstractionBasedEnvCfg = field(default_factory=t1_soccer_maze_env_cfg)
+  maze_phase_index: int = -1
 
   @property
   def train_env_cfg(self):
-    return self.env
+    cfg = t1_soccer_maze_env_cfg(maze_phase_index=self.maze_phase_index)
+    return replace(cfg, scene=replace(cfg.scene, num_envs=self.env.scene.num_envs))
 
   @property
   def play_env_cfg(self):
-    return t1_soccer_maze_env_cfg(play=True)
+    return t1_soccer_maze_env_cfg(maze_phase_index=self.maze_phase_index, play=True)
 
   @property
   def algo_cfg(self):

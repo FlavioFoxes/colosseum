@@ -37,7 +37,19 @@ from colosseum.tasks.soccer_maze.mdp.observations import (
 _ASSET_CFG = SceneEntityCfg("robot", site_names="root_site", joint_names=".*")
 _BALL_ASSET_CFG = SceneEntityCfg("ball", site_names="root_site")
 
+# Max cells for the largest curriculum phase (large maze: 12×12 = 144).
+# Padding to this constant keeps the obs dimension fixed across phases.
+_MAX_MAZE_CELLS = 144
+
+privileged_maze_terms = {
+  "obstacle_map": ObservationTermCfg(
+    func=obstacle_map,
+    params={"abstraction_name": "sokoban", "max_cells": _MAX_MAZE_CELLS},
+  ),
+}
+
 actor_terms = {
+  **privileged_maze_terms,
   # Maze spatial context
   "agent_pos_local": ObservationTermCfg(
     func=agent_pos_local,
@@ -88,11 +100,6 @@ actor_terms = {
 
 critic_terms = {
   **actor_terms,
-  # Additional privileged terms
-  "obstacle_map": ObservationTermCfg(
-    func=obstacle_map,
-    params={"abstraction_name": "sokoban"},
-  ),
   # "foot_ball_contact_force": ObservationTermCfg(
   #   func=foot_ball_contact_force,
   #   params={"sensor_name": "foot_ball_contact"},
@@ -137,6 +144,11 @@ observations = {
   ),
   "critic": ObservationGroupCfg(
     terms=critic_terms,
+    concatenate_terms=True,
+    enable_corruption=False,
+  ),
+  "privileged_maze": ObservationGroupCfg(
+    terms=privileged_maze_terms,
     concatenate_terms=True,
     enable_corruption=False,
   ),

@@ -296,9 +296,9 @@ class SokobanCommandCfg(CommandTermCfg):
   body_forward_axis: tuple[float, float, float] = (1.0, 0.0, 0.0)
   min_velocity: float = 0.1
   max_velocity: float = 2.0
-  min_alignment_scale: float = 0.3
-  angular_velocity_gain: float = 2.0
-  max_angular_velocity: float = 2.0
+  min_alignment_scale: float = 0.1
+  angular_velocity_gain: float = 1.5
+  max_angular_velocity: float = 1.0
 
   # EMA smoothing on the plan direction.  Mirrors AbstractionVelocityCommand:
   # low alpha = heavy smoothing across plan-step boundaries, preventing the
