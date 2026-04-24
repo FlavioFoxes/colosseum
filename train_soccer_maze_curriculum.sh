@@ -21,7 +21,7 @@ set -euo pipefail
 # ── Configuration ──────────────────────────────────────────────────────────────
 NUM_ENVS=4000
 CUDA="0"
-LOG_DIR="./logs/soccer_maze_curriculum"
+LOG_DIR="./logs"
 CKPT_DIR="./checkpoints/soccer_maze_curriculum"
 WANDB_GROUP="soccer-maze-curriculum"
 # ──────────────────────────────────────────────────────────────────────────────
