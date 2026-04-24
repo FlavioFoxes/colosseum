@@ -43,7 +43,7 @@ commands: Dict[str, CommandTermCfg] = {
     robot_entity="robot",
     ball_entity="ball",
     speed_range=(0.2, 1.0),
-    target_distance_range=(2.0, 3.0),
+    target_distance_range=(2.5, 3.5),
     speed_gain=1.0,
     target_reached_threshold=0.5,
     heading_range=math.pi / 4,  # ±45° around the robot forward direction
@@ -60,6 +60,7 @@ commands: Dict[str, CommandTermCfg] = {
     lateral_offset_range=(-0.8, 0.8),
     min_speed=0.0,
     max_speed=0.0,
+    replay_fraction=0.4,
   ),
 }
 
