@@ -1,0 +1,8 @@
+[submodule "tools/simbridge"]
+	path = tools/simbridge
+	url = https://github.com/SPQRTeam/simbridge.git
+	branch = dependency-inversion
+[submodule "tools/circus"]
+	path = tools/circus
+	url = https://github.com/SPQRTeam/circus.git
+	branch = dependency-inversion
