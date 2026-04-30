@@ -1,4 +1,4 @@
-#include "OnnxPolicy.h"
+#include "engines/OnnxInferenceEngine.h"
 
 #include <filesystem>
 #include <stdexcept>
@@ -11,7 +11,7 @@ static const std::string& checked_path(const std::string& path) {
     return path;
 }
 
-OnnxPolicy::OnnxPolicy(const std::string& model_path)
+OnnxInferenceEngine::OnnxInferenceEngine(const std::string& model_path)
     : env_(ORT_LOGGING_LEVEL_WARNING, "Policy"),
       session_opts_(),
       session_(env_, checked_path(model_path).c_str(), session_opts_),
@@ -37,7 +37,7 @@ OnnxPolicy::OnnxPolicy(const std::string& model_path)
     output_dim_ = static_cast<int>(output_shape.back());
 }
 
-Eigen::VectorXf OnnxPolicy::infer(const Eigen::VectorXf& input)
+Eigen::VectorXf OnnxInferenceEngine::infer(const Eigen::VectorXf& input)
 {
     if (input.size() != input_dim_) {
         throw std::runtime_error(

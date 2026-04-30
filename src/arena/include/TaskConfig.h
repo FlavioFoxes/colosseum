@@ -20,6 +20,10 @@ struct TaskConfig {
     // Must match training: typically 0.25 (Python PolicyConfig.action_scale).
     float action_scale = 0.25f;
 
+    // Inference backend: "onnx" (default) or "trt" (TensorRT).
+    // Threaded through Policy → make_engine() factory.
+    std::string inference_backend = "onnx";
+
     Robot robot;  // Hardware specs: gains, limits, joint names, XML path
 
     // Path to the scene MJCF loaded by MujocoPortal.

@@ -39,7 +39,8 @@ struct VelocityObservationSpec : ObservationSpec {
 // robot.sim_joint_names (MuJoCo compiled order). For T1 these are identical.
 class T1VelocityFlat : public Policy {
     public:
-        T1VelocityFlat() : Policy(make_config()) {
+        T1VelocityFlat(const std::string& inference_backend = "onnx")
+            : Policy(make_config(inference_backend)) {
             input_source_ = create_input_source();
         }
 
@@ -103,8 +104,9 @@ class T1VelocityFlat : public Policy {
 #endif
         }
 
-        static TaskConfig make_config() {
+        static TaskConfig make_config(const std::string& inference_backend = "onnx") {
             TaskConfig cfg;
+            cfg.inference_backend = inference_backend;
             cfg.task_name    = "t1-velocity-flat";
             cfg.model_path   = ModelRegistry::resolve(cfg.task_name).string();
             cfg.policy_dt    = 0.02f;

@@ -1,6 +1,6 @@
-#include "input/JoystickInput.h"
+#include "inputs/JoystickInput.h"
 #include "IInputSource.h"
-#include "input/KeyboardInput.h"
+#include "inputs/KeyboardInput.h"
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>

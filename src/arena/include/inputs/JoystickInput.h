@@ -1,5 +1,5 @@
 #pragma once
-#include "IInputSource.h"
+#include "inputs/IInputSource.h"
 #include <array>
 #include <atomic>
 #include <cmath>

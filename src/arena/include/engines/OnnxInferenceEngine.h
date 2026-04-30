@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include "IInferenceEngine.h"
 #include <Eigen/Dense>
 #include <onnxruntime/core/session/onnxruntime_cxx_api.h>
 
@@ -18,9 +19,9 @@
 // The model is run on CPU. Input/output names are read from the model
 // metadata and kept alive as std::string members (ORT requires const char*
 // that outlive the Run() call).
-class OnnxPolicy {
+class OnnxInferenceEngine : public IInferenceEngine {
 public:
-    explicit OnnxPolicy(const std::string& model_path);
+    explicit OnnxInferenceEngine(const std::string& model_path);
 
     // Forward pass. obs must have exactly obs_dim() elements.
     // Returns action_dim() joint position targets in simulation order.

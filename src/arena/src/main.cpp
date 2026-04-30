@@ -24,26 +24,30 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, signal_handler);
 
     // Parse flags: --backend booster|mujoco|circus  --task <name>
+    //              --inference onnx|trt
     //              --host <ip>  --port <n>  --robot <name>
     std::string backend    = "booster";
     std::string task_name  = "t1-velocity-flat";
+    std::string inference_backend = "onnx";
     std::string circus_host = "127.0.0.1";
     int         circus_port = 5555;
     std::string circus_robot = "T1";
     for (int i = 0; i < argc; i++) {
-        if (std::strcmp(argv[i], "--backend") == 0 && i + 1 < argc) backend      = argv[++i];
-        if (std::strcmp(argv[i], "--task")    == 0 && i + 1 < argc) task_name    = argv[++i];
-        if (std::strcmp(argv[i], "--host")    == 0 && i + 1 < argc) circus_host  = argv[++i];
-        if (std::strcmp(argv[i], "--port")    == 0 && i + 1 < argc) circus_port  = std::stoi(argv[++i]);
-        if (std::strcmp(argv[i], "--robot")   == 0 && i + 1 < argc) circus_robot = argv[++i];
+        if (std::strcmp(argv[i], "--backend")   == 0 && i + 1 < argc) backend      = argv[++i];
+        if (std::strcmp(argv[i], "--task")      == 0 && i + 1 < argc) task_name    = argv[++i];
+        if (std::strcmp(argv[i], "--inference") == 0 && i + 1 < argc) inference_backend = argv[++i];
+        if (std::strcmp(argv[i], "--host")      == 0 && i + 1 < argc) circus_host  = argv[++i];
+        if (std::strcmp(argv[i], "--port")      == 0 && i + 1 < argc) circus_port  = std::stoi(argv[++i]);
+        if (std::strcmp(argv[i], "--robot")     == 0 && i + 1 < argc) circus_robot = argv[++i];
     }
 
     // Create and initialize policy.
-    auto policy = TaskRegistry::instance().create(task_name);
+    auto policy = TaskRegistry::instance().create(task_name, inference_backend);
     const TaskConfig& cfg = policy->config();
     std::cout << "Task     : " << cfg.task_name << "\n"
               << "Model    : " << cfg.model_path << "\n"
-              << "Backend  : " << backend << "\n" << std::flush;
+              << "Backend  : " << backend << "\n"
+              << "Inference: " << cfg.inference_backend << "\n" << std::flush;
 
     // Create portal.
     std::unique_ptr<IPortal> portal;

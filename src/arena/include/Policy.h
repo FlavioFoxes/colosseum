@@ -1,16 +1,24 @@
 #pragma once
 #include "IInputSource.h"
-#include "OnnxPolicy.h"
+#include "engines/IInferenceEngine.h"
+#include "engines/OnnxInferenceEngine.h"
 #include "RobotData.h"
 #include "RobotState.h"
 #include "TaskConfig.h"
 #include <memory>
 
+inline std::unique_ptr<IInferenceEngine> make_engine(const TaskConfig& cfg) {
+    if (cfg.inference_backend == "trt") {
+        throw std::runtime_error("TensorRT backend not yet implemented");
+    }
+    return std::make_unique<OnnxInferenceEngine>(cfg.model_path);
+}
+
 // Abstract base class for task-specific deployment policies.
 //
-// A Policy owns the ONNX model, the input source, and drives the inference
-// loop. Subclasses implement build_observation() to match training, and
-// optionally override update_input() to read from input_source_ and update
+// A Policy owns the inference engine, the input source, and drives the
+// inference loop. Subclasses implement build_observation() to match training,
+// and optionally override update_input() to read from input_source_ and update
 // task-specific state (e.g. a VelocityCommand in T1VelocityFlat).
 //
 // Execution flow per step:
@@ -18,14 +26,14 @@
 //   2. get_action(state):
 //      a. update_input()        — read input_source_, update task state
 //      b. build_observation()   — fill `observation` from state + task state
-//      c. OnnxPolicy::infer()   — forward pass
+//      c. engine_->infer()      — forward pass
 //      d. decode action         — raw * action_scale[i] + default_joint_pos[i]
 class Policy {
 public:
     explicit Policy(TaskConfig cfg)
         : config_(std::move(cfg)),
-          onnx(config_.model_path) {
-        observation.reserve(onnx.input_dim());
+          engine_(make_engine(config_)) {
+        observation.reserve(engine_->input_dim());
     }
 
     virtual ~Policy() {
@@ -42,7 +50,7 @@ public:
         update_input();
         build_observation(state);
         Eigen::VectorXf obs_vec = Eigen::Map<Eigen::VectorXf>(observation.data(), observation.size());
-        Eigen::VectorXf action_vec = onnx.infer(obs_vec);
+        Eigen::VectorXf action_vec = engine_->infer(obs_vec);
 
         // Store last_action in sim order (used by build_observation next step).
         for (int i = 0; i < TaskConfig::NUM_JOINTS; i++)
@@ -66,7 +74,7 @@ protected:
     RobotData<TaskConfig::NUM_JOINTS> robot_data_{config_.robot};
     float last_action[TaskConfig::NUM_JOINTS]{};  // in sim order
     std::vector<float> observation;
-    OnnxPolicy onnx;
+    std::unique_ptr<IInferenceEngine> engine_;
     std::unique_ptr<IInputSource> input_source_;
 
     // Called once per step before build_observation(). Default: no-op.

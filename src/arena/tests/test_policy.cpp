@@ -1,4 +1,4 @@
-#include "OnnxPolicy.h"
+#include "engines/OnnxInferenceEngine.h"
 #include "RobotData.h"
 #include <gtest/gtest.h>
 #include <Eigen/Dense>
@@ -10,13 +10,13 @@ static std::string model_path() {
 }
 
 TEST(PolicyTest, LoadsModel) {
-    OnnxPolicy policy(model_path());
+    OnnxInferenceEngine policy(model_path());
     EXPECT_EQ(policy.input_dim(),    82);
     EXPECT_EQ(policy.output_dim(), 82);
 }
 
 TEST(PolicyTest, IdentityForwardPass) {
-    OnnxPolicy policy(model_path());
+    OnnxInferenceEngine policy(model_path());
 
     Eigen::VectorXf obs = Eigen::VectorXf::LinSpaced(policy.input_dim(), 0.f, 1.f);
     Eigen::VectorXf out = policy.infer(obs);
@@ -27,7 +27,7 @@ TEST(PolicyTest, IdentityForwardPass) {
 }
 
 TEST(PolicyTest, WrongObsDimThrows) {
-    OnnxPolicy policy(model_path());
+    OnnxInferenceEngine policy(model_path());
     Eigen::VectorXf bad_obs(policy.input_dim() + 1);
     EXPECT_THROW(policy.infer(bad_obs), std::runtime_error);
 }

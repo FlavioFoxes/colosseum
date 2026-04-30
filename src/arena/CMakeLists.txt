@@ -105,7 +105,7 @@ if(GTest_FOUND)
     file(
         GLOB_RECURSE TESTABLE_SOURCES
         CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/OnnxPolicy.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/engines/OnnxInferenceEngine.cpp"
     )
 
     # Main test executable

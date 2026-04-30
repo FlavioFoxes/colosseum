@@ -1,4 +1,4 @@
-#include "input/KeyboardInput.h"
+#include "inputs/KeyboardInput.h"
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
