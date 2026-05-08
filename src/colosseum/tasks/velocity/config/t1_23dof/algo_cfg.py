@@ -23,6 +23,7 @@ def booster_t1_ppo_cfg() -> PpoConfig:
     desired_kl=0.01,
     schedule="adaptive",
     obs_normalization=True,
+    symmetry_loss_coef=1.0,
     actor=PpoActorConfig(hidden_layers=[512, 256, 128], activation="elu"),
     critic=PpoCriticConfig(hidden_layers=[512, 256, 128], activation="elu"),
   )

@@ -73,7 +73,7 @@ rewards = {
     func=base_height_penalty,
     weight=-20.0,
     params={
-      "target_height": 0.6,
+      "target_height": 0.66,
       "asset_cfg": SceneEntityCfg("robot"),
     },
   ),
@@ -145,11 +145,11 @@ rewards = {
       "min_dist": 0.15,
     },
   ),
-  "self_collisions": RewardTermCfg(
-    func=self_collision_cost,
-    weight=-5.0,
-    params={"sensor_name": SELF_COLLISION_SENSOR.name, "force_threshold": 10.0},
-  ),
+  # "self_collisions": RewardTermCfg(
+  #   func=self_collision_cost,
+  #   weight=-5.0,
+  #   params={"sensor_name": SELF_COLLISION_SENSOR.name, "force_threshold": 10.0},
+  # ),
   # =========================
   # Foot trajectory Rewards
   # =========================

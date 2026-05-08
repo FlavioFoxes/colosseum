@@ -20,19 +20,19 @@ curriculum = {
           "ang_vel_z": (-0.5, 0.5),
         },
         {
-          "transitions": 100_000_000,
+          "transitions": 200_000_000,
           "lin_vel_x": (-1.0, 1.0),
           "lin_vel_y": (-0.3, 0.3),
           "ang_vel_z": (-0.75, 0.75),
         },
         {
-          "transitions": 200_000_000,
+          "transitions": 300_000_000,
           "lin_vel_x": (-2.0, 2.0),
           "lin_vel_y": (-0.5, 0.5),
           "ang_vel_z": (-1.0, 1.0),
         },
         {
-          "transitions": 300_000_000,
+          "transitions": 500_000_000,
           "lin_vel_x": (-2.3, 2.3),
           "lin_vel_y": (-0.6, 0.6),
           "ang_vel_z": (-1.0, 1.0),
@@ -46,10 +46,10 @@ curriculum = {
       "command_name": "twist",
       "stages": [
         {"transitions": 0, "rel_standing_envs": 0.5},
-        {"transitions": 50_000_000, "rel_standing_envs": 0.4},
-        {"transitions": 100_000_000, "rel_standing_envs": 0.3},
-        {"transitions": 150_000_000, "rel_standing_envs": 0.2},
-        {"transitions": 200_000_000, "rel_standing_envs": 0.1},
+        {"transitions": 100_000_000, "rel_standing_envs": 0.4},
+        {"transitions": 200_000_000, "rel_standing_envs": 0.3},
+        {"transitions": 300_000_000, "rel_standing_envs": 0.2},
+        {"transitions": 500_000_000, "rel_standing_envs": 0.1},
       ],
     },
   ),
@@ -70,7 +70,7 @@ curriculum = {
           },
         },
         {
-          "transitions": 100_000_000,
+          "transitions": 200_000_000,
           "velocity_range": {
             "x": (-1.0, 1.0),
             "y": (-1.0, 1.0),
@@ -81,7 +81,7 @@ curriculum = {
           },
         },
         {
-          "transitions": 200_000_000,
+          "transitions": 500_000_000,
           "velocity_range": {
             "x": (-1.5, 1.5),
             "y": (-1.5, 1.5),

@@ -161,6 +161,11 @@ class PpoConfig(AlgorithmConfig):
     normalize_advantage_per_mini_batch: bool = False
     """If True, normalize advantages per mini-batch. If False, normalize globally."""
 
+    # Symmetry loss
+    symmetry_loss_coef: float = 0.0
+    """Coefficient for the symmetry loss. 0.0 disables it entirely.
+    Requires actor obs terms to use MirrorableObservationTermCfg with mirror_fn set."""
+
     # Network configs
     actor: PpoActorConfig = PpoActorConfig()
     """Configuration for the PPO actor network."""

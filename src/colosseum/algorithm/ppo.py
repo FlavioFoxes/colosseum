@@ -28,6 +28,7 @@ from mjlab.envs import ManagerBasedRlEnv
 
 from colosseum.algorithm.base_algorithm import BaseAlgorithm, ObsType
 from colosseum.algorithm.networks.ppo_networks import PpoActor, PpoValueNet
+from colosseum.mdp.symmetry import TermMirrorSpec, build_symmetry_spec, mirror_obs
 from colosseum.algorithm.utils.normalization import (
   EmpiricalNormalization,
   IdentityNormalizer,
@@ -78,6 +79,16 @@ class PPO(BaseAlgorithm):
     self._build_optimizers()
     self._build_rollout_buffer()
     self._build_normalizer()
+
+    # Symmetry loss: compile obs mirror layout once from the env's observation manager.
+    self._actor_sym_spec: list[TermMirrorSpec] | None = None
+    self._action_mirror_fn = None
+    if config.symmetry_loss_coef > 0.0:
+      obs_manager = self.env.observation_manager
+      self._actor_sym_spec = build_symmetry_spec(obs_manager, "actor")
+      if "actions" in obs_manager.active_terms.get("actor", []):
+        actions_cfg = obs_manager.get_term_cfg("actor", "actions")
+        self._action_mirror_fn = getattr(actions_cfg, "mirror_fn", None)
 
     self.episode_length_buf = torch.zeros(self.env.num_envs, device=self.device)
 
@@ -273,9 +284,21 @@ class PPO(BaseAlgorithm):
         norm_critic_obs = self.critic_obs_normalizer(current_critic_obs)
 
         # Get action, log_prob, value, distribution params (single forward pass)
-        actions, log_probs, action_means, action_stds = self.actor.act_with_log_prob(
-          norm_actor_obs
-        )
+        if (
+          self.config.symmetry_loss_coef > 0.0
+          and self._actor_sym_spec is not None
+          and self._action_mirror_fn is not None
+        ):
+          mirrored_actor_obs = mirror_obs(norm_actor_obs, self._actor_sym_spec)
+          actions, log_probs, action_means, action_stds = (
+            self.actor.act_symmetric_with_log_prob(
+              norm_actor_obs, mirrored_actor_obs, self._action_mirror_fn
+            )
+          )
+        else:
+          actions, log_probs, action_means, action_stds = self.actor.act_with_log_prob(
+            norm_actor_obs
+          )
         values = self.value_net(norm_critic_obs)
 
         # Step environment (action clipping handled by vecenv_wrapper)
@@ -372,6 +395,7 @@ class PPO(BaseAlgorithm):
     total_value_loss = 0.0
     total_entropy = 0.0
     total_kl = 0.0
+    total_symmetry_loss = 0.0
     num_updates = 0
 
     generator = self.rollout_buffer.mini_batch_generator(
@@ -449,11 +473,29 @@ class PPO(BaseAlgorithm):
       else:
         value_loss = (returns - new_values).pow(2).mean()
 
+      # --- Symmetry loss ---
+      # Enforce policy(mirror(obs)) == mirror(policy(obs)).
+      # Uses deterministic action means; mu_batch is detached so gradients only
+      # flow through actions_on_mirrored (conflicting gradients otherwise).
+      symmetry_loss = torch.tensor(0.0, device=self.device)
+      if (
+        self.config.symmetry_loss_coef > 0.0
+        and self._actor_sym_spec is not None
+        and self._action_mirror_fn is not None
+      ):
+        mirrored_obs = mirror_obs(actor_obs, self._actor_sym_spec)
+        actions_on_mirrored = self.actor.forward(mirrored_obs)
+        mirror_of_actions = self._action_mirror_fn(mu_batch.detach())
+        symmetry_loss = torch.nn.functional.mse_loss(
+          actions_on_mirrored, mirror_of_actions
+        )
+
       # --- Total loss (single combined, RSL-RL style) ---
       loss = (
         surrogate_loss
         + self.config.value_loss_coef * value_loss
         - self.config.entropy_coef * entropy.mean()
+        + self.config.symmetry_loss_coef * symmetry_loss
       )
 
       # --- Gradient step (single optimizer, RSL-RL style) ---
@@ -473,6 +515,7 @@ class PPO(BaseAlgorithm):
       total_value_loss += value_loss.item()
       total_entropy += entropy.mean().item()
       total_kl += kl_mean
+      total_symmetry_loss += symmetry_loss.item()
       num_updates += 1
 
     if self.is_distributed:
@@ -482,21 +525,26 @@ class PPO(BaseAlgorithm):
           total_value_loss,
           total_entropy,
           total_kl,
+          total_symmetry_loss,
           float(num_updates),
         ]
       )
       total_surrogate_loss, total_value_loss, total_entropy, total_kl = totals[:4]
-      num_updates = int(totals[4])
+      total_symmetry_loss = totals[4]
+      num_updates = int(totals[5])
 
     self.rollout_buffer.clear()
 
-    return {
+    loss_dict: dict[str, float] = {
       "surrogate_loss": total_surrogate_loss / max(num_updates, 1),
       "value_loss": total_value_loss / max(num_updates, 1),
       "entropy": total_entropy / max(num_updates, 1),
       "kl": total_kl / max(num_updates, 1),
       "learning_rate": self.learning_rate,
     }
+    if self.config.symmetry_loss_coef > 0.0:
+      loss_dict["symmetry_loss"] = total_symmetry_loss / max(num_updates, 1)
+    return loss_dict
 
   def _compose_actor_input(
     self,
@@ -511,7 +559,16 @@ class PPO(BaseAlgorithm):
     return actor_obs
 
   def _eval_get_action(self, normalized_obs: torch.Tensor) -> torch.Tensor:
-    """Deterministic action for PPO evaluation."""
+    """Deterministic action for PPO evaluation. Symmetrizes if loss is active."""
+    if (
+      self.config.symmetry_loss_coef > 0.0
+      and self._actor_sym_spec is not None
+      and self._action_mirror_fn is not None
+    ):
+      mirrored = mirror_obs(normalized_obs, self._actor_sym_spec)
+      mu = self.actor.act_inference(normalized_obs)
+      mu_mirrored = self.actor.act_inference(mirrored)
+      return 0.5 * (mu + self._action_mirror_fn(mu_mirrored))
     return self.actor.act_inference(normalized_obs)
 
   def save(self, path: str | Path, **extra_state: Any) -> None:

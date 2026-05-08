@@ -13,6 +13,8 @@ Initialization follows RSL-RL/holosoma conventions:
 
 from __future__ import annotations
 
+from typing import Callable
+
 import torch
 import torch.nn as nn
 
@@ -100,6 +102,28 @@ class PpoActor(Network):
         actions = dist.sample()
         log_probs = dist.log_prob(actions).sum(dim=-1)
         return actions, log_probs, mean, std
+
+    def act_symmetric_with_log_prob(
+        self,
+        obs: torch.Tensor,
+        mirrored_obs: torch.Tensor,
+        action_mirror_fn: Callable[[torch.Tensor], torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Sample from the symmetrized distribution.
+
+        sym_mu = 0.5 * (mu(obs) + mirror(mu(mirror(obs))))
+
+        Log probs are computed under Normal(sym_mu, std) so the PPO importance
+        ratio exp(new_log_prob - old_log_prob) stays self-consistent.
+        """
+        mu = self.forward(obs)
+        mu_mirrored = self.forward(mirrored_obs)
+        sym_mu = 0.5 * (mu + action_mirror_fn(mu_mirrored))
+        std = torch.clamp(self.std, min=self.min_noise_std).expand_as(sym_mu)
+        dist = torch.distributions.Normal(sym_mu, std)
+        actions = dist.sample()
+        log_probs = dist.log_prob(actions).sum(dim=-1)
+        return actions, log_probs, sym_mu, std
 
     def act_inference(self, obs: torch.Tensor) -> torch.Tensor:
         """Deterministic action (mean) for evaluation."""
