@@ -284,21 +284,9 @@ class PPO(BaseAlgorithm):
         norm_critic_obs = self.critic_obs_normalizer(current_critic_obs)
 
         # Get action, log_prob, value, distribution params (single forward pass)
-        if (
-          self.config.symmetry_loss_coef > 0.0
-          and self._actor_sym_spec is not None
-          and self._action_mirror_fn is not None
-        ):
-          mirrored_actor_obs = mirror_obs(norm_actor_obs, self._actor_sym_spec)
-          actions, log_probs, action_means, action_stds = (
-            self.actor.act_symmetric_with_log_prob(
-              norm_actor_obs, mirrored_actor_obs, self._action_mirror_fn
-            )
-          )
-        else:
-          actions, log_probs, action_means, action_stds = self.actor.act_with_log_prob(
-            norm_actor_obs
-          )
+        actions, log_probs, action_means, action_stds = self.actor.act_with_log_prob(
+          norm_actor_obs
+        )
         values = self.value_net(norm_critic_obs)
 
         # Step environment (action clipping handled by vecenv_wrapper)
@@ -474,20 +462,19 @@ class PPO(BaseAlgorithm):
         value_loss = (returns - new_values).pow(2).mean()
 
       # --- Symmetry loss ---
-      # Enforce policy(mirror(obs)) == mirror(policy(obs)).
-      # Uses deterministic action means; mu_batch is detached so gradients only
-      # flow through actions_on_mirrored (conflicting gradients otherwise).
+      # Enforce μ(obs) ≈ mirror(μ(mirror(obs))). Both sides get gradients.
+      # Applied only during update (not rollout) to avoid distribution mismatch.
       symmetry_loss = torch.tensor(0.0, device=self.device)
       if (
         self.config.symmetry_loss_coef > 0.0
         and self._actor_sym_spec is not None
         and self._action_mirror_fn is not None
       ):
+        mu_obs = self.actor.forward(actor_obs)
         mirrored_obs = mirror_obs(actor_obs, self._actor_sym_spec)
-        actions_on_mirrored = self.actor.forward(mirrored_obs)
-        mirror_of_actions = self._action_mirror_fn(mu_batch.detach())
+        mu_on_mirrored = self.actor.forward(mirrored_obs)
         symmetry_loss = torch.nn.functional.mse_loss(
-          actions_on_mirrored, mirror_of_actions
+          mu_obs, self._action_mirror_fn(mu_on_mirrored)
         )
 
       # --- Total loss (single combined, RSL-RL style) ---
