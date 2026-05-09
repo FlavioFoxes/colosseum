@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
+from mjlab.tasks.velocity.mdp.velocity_command import UniformVelocityCommandCfg
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.nan_guard import NanGuardCfg
 from mjlab.viewer import ViewerConfig
@@ -91,6 +92,11 @@ def booster_t1_velocity_env_cfg(play: bool = False) -> ColosseumEnvCfg:
     cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
+    twist = cfg.commands["twist"]
+    assert isinstance(twist, UniformVelocityCommandCfg)
+    twist.rel_forward_envs = 1.0
+    twist.rel_standing_envs = 0.0
+    twist.rel_heading_envs = 1.0
 
     if cfg.scene.terrain is not None:
       if cfg.scene.terrain.terrain_generator is not None:
