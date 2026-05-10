@@ -358,6 +358,7 @@ class ObstacleCommand(CommandTerm):
     env_ids: torch.Tensor,
     obstacle_idx: int,
   ) -> torch.Tensor:
+    return torch.zeros(len(env_ids), dtype=torch.bool, device=self._env.device)
     role = self._role_for_obstacle(obstacle_idx)
     if role == "none":
       return torch.zeros(len(env_ids), dtype=torch.bool, device=self._env.device)

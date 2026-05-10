@@ -12,6 +12,7 @@ from mjlab.viewer import ViewerConfig
 from colosseum.assets.ball.ball_spec import get_ball_cfg
 from colosseum.config.types.task import TaskConfig, register_task
 from colosseum.envs.colosseum_env import ColosseumEnvCfg
+from colosseum.research.dribbling.rma_terms import DribblingRmaTermCfg
 from colosseum.robots.t1_23dof.constants import BASE_BODY_NAME, get_robot_cfg
 from colosseum.robots.t1_23dof.sensors import (
   FEET_GROUND_CONTACT_SENSOR,
@@ -25,7 +26,6 @@ from colosseum.robots.t1_23dof.sensors import (
   SELF_COLLISION_SENSOR,
 )
 from colosseum.tasks.dribbling.mdp.obstacle_commands import ObstacleCommandCfg
-from colosseum.research.dribbling.rma_terms import DribblingRmaTermCfg
 from colosseum.tasks.dribbling.obstacle_spec import NUM_OBSTACLES, get_obstacle_cfg
 from colosseum.tasks.dribbling.viz import DribblingViz
 
@@ -109,8 +109,8 @@ def viewer_cfg() -> ViewerConfig:
     entity_name="robot",
     body_name=BASE_BODY_NAME,
     distance=3.0,
-    elevation=-5.0,
-    azimuth=90.0,
+    elevation=-20.0,
+    azimuth=30.0,
   )
 
 
