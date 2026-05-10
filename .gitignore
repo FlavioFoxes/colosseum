@@ -5,6 +5,9 @@ __pycache__/
 *$py.class
 *.json
 
+# Ignore wandb api key file
+wandb.env
+
 # Ignore virtual environment directories
 venv/
 env/
