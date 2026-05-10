@@ -209,7 +209,7 @@ The documentation covers:
 - **Scene Layer**: Entities, compilation, indexing
 - **Simulation Layer**: MuJoCo Warp integration
 
-## Key Concepts
+In @docs/architecture/INDEX.md you can find the index for detailed explaination about the architecture, how to modify it and how to add new elements.
 
 ### SceneEntityCfg Resolution
 
